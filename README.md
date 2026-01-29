@@ -7,7 +7,7 @@ A powerful CLI tool designed for Indian equity investors to track, analyze, and 
 - **Automated Data Pipeline**: Fetches the complete NSE ticker list and sources deep dividend/price history directly from Yahoo Finance APIs.
 - **Split-Adjusted Analysis (Forward Model)**: Automatically detects stock splits (2:1, 5:1, 10:1, etc.) and calculates the growth of **1 original share**. 
   - *Example*: See how 1 share of HDFC Bank bought in 1997 has grown in total payout as it multiplied into 20 shares.
-- **Multi-Period CAGR**: View Compound Annual Growth Rates for 3, 5, 10, 15, 20, and 30-year durations.
+- **Multi-Period Dividend CAGR**: View Compounded Annual Dividend Growth Rates for 3, 5, 10, 15, 20, and 30-year durations.
 - **Consistency Tracking**: Track years where dividends were **Increased (Up)**, **Stalled (Flat)**, **Reduced**, or **Stopped**.
 - **Power-User Filtering**: Use standard flags or execute arbitrary Python-style conditions for complex research.
 - **Offline Storage**: All data is persisted in a local SQLite database for blazing-fast filtering and offline access.
@@ -46,20 +46,20 @@ dividend-cli update --limit 50
 Find "Dividend Aristocrats" or high-growth opportunities using robust filters.
 
 ```bash
-# Basic Filter: Min 1.5% yield and 10% 5-year CAGR
+# Basic Filter: Min 1.5% yield and 10% 5-year Dividend CAGR
 dividend-cli filter --min-yield 1.5 --cagr-5yr-min 10
 
-# Consistency Filter: Min 5 years of growth, Max 1 year of reduction
+# Consistency Filter: Min 5 years of Dividend growth, Max 1 year of Dividend reduction
 dividend-cli filter --years-up 5 --years-reduced 1
 ```
 
 ### 3. Power-User: Arbitrary Conditions
 Use the `--condition` flag to run complex mathematical logic.
 ```bash
-# Find stocks where growth years outpace stalled/stopped years by 2x
+# Find stocks where Dividend growth years outpace stalled/stopped years by 2x
 dividend-cli filter --condition "(years-stopped + years-stalled) * 2 <= years-up"
 
-# Find stocks where 3Yr growth is strictly better than 10Yr growth
+# Find stocks where 3Yr Dividend growth is strictly better than 10Yr Dividend growth
 dividend-cli filter --condition "c3 > c10"
 ```
 
@@ -79,8 +79,8 @@ When using the `--condition` flag, you can use the following variables:
 | `reduced` / `years_reduced` | Total years dividend decreased |
 | `stopped` / `years_stopped` | Total years dividend was zero |
 | `yield` / `avg_yield` | Average historical yield (%) |
-| `cagr` / `cagr_overall` | CAGR since first record |
-| `c3`, `c5`, `c10` ... | CAGR for last 3, 5, 10, 15, 20, 30 years |
+| `cagr` / `cagr_overall` | Dividend CAGR since first record |
+| `c3`, `c5`, `c10` ... | Dividend CAGR for last 3, 5, 10, 15, 20, 30 years |
 | `price` | Current market price |
 | `shares` | Current share count from 1 original share |
 
