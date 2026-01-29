@@ -16,8 +16,8 @@ A powerful CLI tool designed for Indian equity investors to track, analyze, and 
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/yourusername/dividend-calculator.git
-   cd dividend-calculator
+   git clone https://github.com/Santhosh-004/dividend-cli.git
+   cd dividend-cli
    ```
 
 2. **Install dependencies**:
