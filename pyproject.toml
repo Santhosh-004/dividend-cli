@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dividend-calculator"
+version = "0.1.0"
+description = "Indian stock dividend calculator and filter"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "yfinance",
+    "pandas",
+    "click",
+    "tabulate",
+    "tqdm",
+    "requests",
+]
+
+[project.scripts]
+dividend-cli = "dividend_calculator.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dividend_calculator*"]

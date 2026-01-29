@@ -1,0 +1,6 @@
+yfinance
+pandas
+click
+tabulate
+tqdm
+requests
