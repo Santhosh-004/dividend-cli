@@ -26,7 +26,8 @@ def main():
 @click.option("--force", is_flag=True, help="Force update of all tickers.")
 @click.option("--max-age", default=90, help="Maximum age of data in days before refresh.")
 @click.option("--limit", default=None, type=int, help="Limit the number of tickers to update (for testing).")
-def update(force, max_age, limit):
+@click.option("--workers", default=5, help="Number of parallel workers for fetching data.")
+def update(force, max_age, limit, workers):
     """Refresh ticker list and fetch missing dividend/price data."""
     click.echo("Updating ticker list from NSE...")
     added = fetch.download_nse_tickers()
@@ -36,11 +37,12 @@ def update(force, max_age, limit):
     if limit:
         tickers = tickers[:limit]
 
-    click.echo(f"Checking data for {len(tickers)} tickers...")
+    click.echo(f"Checking data for {len(tickers)} tickers using {workers} workers...")
     
     threshold = datetime.utcnow() - timedelta(days=max_age)
-
-    for ticker in tqdm(tickers, desc="Updating data"):
+    
+    to_update = []
+    for ticker in tickers:
         symbol = ticker["symbol"]
         last_updated_str = ticker["last_updated"]
         
@@ -51,11 +53,24 @@ def update(force, max_age, limit):
                 should_update = True
         
         if should_update:
-            try:
-                new_div, new_price = fetch.fetch_dividends(symbol)
-                # fetch.fetch_dividends already updates the timestamp in DB
-            except Exception as e:
-                click.echo(f"\nError fetching data for {symbol}: {e}", err=True)
+            to_update.append(ticker)
+
+    if to_update:
+        # Use a progress bar for the entire batch
+        with tqdm(total=len(to_update), desc="Updating data") as pbar:
+            session = fetch.get_session()
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                future_to_symbol = {executor.submit(fetch.fetch_dividends, t["symbol"], True, session): t["symbol"] for t in to_update}
+                for future in as_completed(future_to_symbol):
+                    symbol = future_to_symbol[future]
+                    try:
+                        future.result()
+                    except Exception as exc:
+                        click.echo(f"\nError fetching data for {symbol}: {exc}", err=True)
+                    pbar.update(1)
+    else:
+        click.echo("All tickers are up to date.")
 
 
 def get_cagr_for_years(yearly_totals: pd.Series, years: int) -> Optional[float]:
@@ -136,12 +151,17 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
     eval_condition = condition
     if eval_condition:
         # Simple replacement for common user patterns like years-up -> years_up
-        for field in ['years-up', 'years-stalled', 'years-reduced', 'years-stopped', 'avg-yield', 'cagr-overall']:
+        for field in ['years-up', 'years-stalled', 'years-reduced', 'years-stopped', 'avg-yield', 'cagr-overall', 'mcap', 'payout', 'eps', 'pe']:
             eval_condition = eval_condition.replace(field, field.replace('-', '_'))
 
     for sym, group in df.groupby('symbol'):
         ticker_id = group['ticker_id'].iloc[0]
         curr_price = group['current_price'].iloc[0] if 'current_price' in group.columns else None
+        mcap = group['market_cap'].iloc[0] if 'market_cap' in group.columns else None
+        payout = group['payout_ratio'].iloc[0] if 'payout_ratio' in group.columns else None
+        eps = group['eps_ttm'].iloc[0] if 'eps_ttm' in group.columns else None
+        pe = group['pe_ratio'].iloc[0] if 'pe_ratio' in group.columns else None
+        industry = group['industry'].iloc[0] if 'industry' in group.columns else "N/A"
 
         # Calculate final share count based on ALL splits in DB (even after last dividend)
         all_splits = splits_by_ticker.get(ticker_id, [])
@@ -211,7 +231,11 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
                 'c3': c3 or 0, 'c5': c5 or 0, 'c10': c10 or 0,
                 'c15': c15 or 0, 'c20': c20 or 0, 'c30': c30 or 0,
                 'price': curr_price or 0,
-                'shares': final_shares
+                'shares': final_shares,
+                'mcap': (mcap / 10**7) if mcap else 0, # In Crores
+                'payout': payout or 0,
+                'eps': eps or 0,
+                'pe': pe or 0
             }
             try:
                 if not eval(eval_condition, {"__builtins__": {}}, eval_vars):
@@ -222,16 +246,16 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
             
         res = {
             "Symbol": sym,
+            "Industry": industry,
             "Price": round(curr_price, 2) if curr_price is not None else "N/A",
+            "MCap (Cr)": round(mcap / 10**7, 2) if mcap else "N/A",
+            "Payout (%)": round(payout, 2) if payout is not None else "N/A",
+            "EPS": round(eps, 2) if eps is not None else "N/A",
             "Shares": round(final_shares, 2),
             "Avg Yield (%)": round(avg_yield, 2),
             "CAGR Overall (%)": round(cagr_overall, 2),
             "3Yr": round(c3, 2) if c3 is not None else "N/A",
             "5Yr": round(c5, 2) if c5 is not None else "N/A",
-            "10Yr": round(c10, 2) if c10 is not None else "N/A",
-            "15Yr": round(c15, 2) if c15 is not None else "N/A",
-            "20Yr": round(c20, 2) if c20 is not None else "N/A",
-            "30Yr": round(c30, 2) if c30 is not None else "N/A",
             "Yrs Up": up,
             "Yrs Stalled": stalled,
             "Yrs Reduced": reduced,
@@ -252,7 +276,7 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
 
         # Repeat headers every 30 rows for better readability in long lists
         header_interval = 30
-        legend_tip = "COLUMNS: CAGR=% Growth, Yrs Up=Increased, Stalled=Unchanged, Reduced=Decreased, Stopped=Zero"
+        legend_tip = "COLUMNS: MCap=Market Cap (Cr), Payout=Payout Ratio (%), CAGR=% Growth, Yrs Up=Increased"
         
         for i in range(0, len(results), header_interval):
             if i > 0:
@@ -263,6 +287,10 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
         click.echo("\n" + "="*40)
         click.echo("DETAILED COLUMN LEGEND (FORWARD-ADJUSTED MODEL):")
         click.echo("  Price            : Current market price (raw)")
+        click.echo("  MCap (Cr)        : Market Capitalization in Crores (INR)")
+        click.echo("  Payout (%)       : Dividend Payout Ratio (Percentage of earnings paid as dividends)")
+        click.echo("  EPS              : Trailing Twelve Months Earnings Per Share")
+        click.echo("  PE               : Price-to-Earnings Ratio")
         click.echo("  Shares           : How many shares 1 original share has become via splits")
         click.echo("  Avg Yield (%)    : Average of (Raw Dividend / Raw Price * 100)")
         click.echo("  CAGR Overall (%) : Growth of total payout from 1 original share")
@@ -272,7 +300,7 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
         click.echo("  Yrs Reduced      : Years where total payout was LOWER than prev year")
         click.echo("  Yrs Stopped      : Years where total payout was ZERO")
         click.echo("  --condition      : Arbitrary Python expression using variables above")
-        click.echo("                     Example: '(years_stopped + years_stalled) * 2 <= years_up'")
+        click.echo("                     Example: 'mcap > 5000 and payout < 60 and c5 > 10'")
         click.echo("="*40)
 
 
@@ -308,6 +336,17 @@ def stats(symbol):
         click.echo(tabulate([(s['ex_date'], f"{s['numerator']}:{s['denominator']}") for s in splits], 
                            headers=["Ex‑Date", "Ratio"], tablefmt="simple"))
     
+    # Financial Metrics
+    click.echo("\nFinancial Metrics:")
+    metrics = [
+        ("Price", f"{ticker['current_price']:.2f}" if ticker['current_price'] else "N/A"),
+        ("Market Cap (Cr)", f"{ticker['market_cap']/10**7:.2f}" if ticker['market_cap'] else "N/A"),
+        ("Payout Ratio (%)", f"{ticker['payout_ratio']:.2f}" if ticker['payout_ratio'] else "N/A"),
+        ("Trailing EPS", f"{ticker['eps_ttm']:.2f}" if ticker['eps_ttm'] else "N/A"),
+        ("PE Ratio", f"{ticker['pe_ratio']:.2f}" if ticker['pe_ratio'] else "N/A"),
+    ]
+    click.echo(tabulate(metrics, tablefmt="simple"))
+
     # Yearly summary
     yearly_series = df.groupby('year')['amount'].sum().sort_index()
     yearly = df.groupby('year').agg({

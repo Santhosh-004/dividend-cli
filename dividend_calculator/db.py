@@ -16,8 +16,12 @@ CREATE TABLE IF NOT EXISTS tickers (
     symbol TEXT UNIQUE NOT NULL,
     name TEXT,
     sector TEXT,
+    industry TEXT,
     market_cap REAL,
     current_price REAL,
+    payout_ratio REAL,
+    eps_ttm REAL,
+    pe_ratio REAL,
     last_updated DATE
 );
 
@@ -49,6 +53,11 @@ CREATE TABLE IF NOT EXISTS splits (
     UNIQUE(ticker_id, ex_date),
     FOREIGN KEY(ticker_id) REFERENCES tickers(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_dividends_ticker ON dividends(ticker_id, ex_date);
+CREATE INDEX IF NOT EXISTS idx_prices_ticker ON prices(ticker_id, ex_date);
+CREATE INDEX IF NOT EXISTS idx_splits_ticker ON splits(ticker_id, ex_date);
+CREATE INDEX IF NOT EXISTS idx_tickers_symbol ON tickers(symbol);
 """
 
 
@@ -68,11 +77,18 @@ def init_db() -> None:
     conn = get_connection()
     try:
         conn.executescript(SCHEMA)
-        # Add current_price if it doesn't exist (for existing DBs)
-        try:
-            conn.execute("ALTER TABLE tickers ADD COLUMN current_price REAL")
-        except sqlite3.OperationalError:
-            pass # Already exists
+        # Handle migration for existing DBs
+        columns = [
+            ("industry", "TEXT"),
+            ("payout_ratio", "REAL"),
+            ("eps_ttm", "REAL"),
+            ("pe_ratio", "REAL")
+        ]
+        for col_name, col_type in columns:
+            try:
+                conn.execute(f"ALTER TABLE tickers ADD COLUMN {col_name} {col_type}")
+            except sqlite3.OperationalError:
+                pass # Column already exists
         conn.commit()
     finally:
         conn.close()
@@ -80,6 +96,7 @@ def init_db() -> None:
 
 def upsert_ticker(symbol: str, name: Optional[str] = None,
                   sector: Optional[str] = None,
+                  industry: Optional[str] = None,
                   market_cap: Optional[float] = None) -> int:
     """Insert or ignore a ticker and return its id.
 
@@ -89,14 +106,42 @@ def upsert_ticker(symbol: str, name: Optional[str] = None,
     try:
         cur = conn.cursor()
         cur.execute(
-            "INSERT OR IGNORE INTO tickers (symbol, name, sector, market_cap) VALUES (?,?,?,?)",
-            (symbol, name, sector, market_cap),
+            "INSERT OR IGNORE INTO tickers (symbol, name, sector, industry, market_cap) VALUES (?,?,?,?,?)",
+            (symbol, name, sector, industry, market_cap),
         )
-        # Retrieve the id (whether newly inserted or existing)
+        # Update name/sector/industry if it was previously null but now provided
+        if name or sector or industry or market_cap:
+            cur.execute(
+                "UPDATE tickers SET name = COALESCE(name, ?), sector = COALESCE(sector, ?), "
+                "industry = COALESCE(industry, ?), market_cap = COALESCE(market_cap, ?) WHERE symbol = ?",
+                (name, sector, industry, market_cap, symbol)
+            )
+        
         cur.execute("SELECT id FROM tickers WHERE symbol = ?", (symbol,))
         row = cur.fetchone()
         conn.commit()
         return row["id"]
+    finally:
+        conn.close()
+
+
+def update_ticker_metrics(ticker_id: int, metrics: Dict[str, Any]) -> None:
+    """Update financial metrics for a ticker."""
+    conn = get_connection()
+    try:
+        fields = []
+        params = []
+        for key, value in metrics.items():
+            fields.append(f"{key} = ?")
+            params.append(value)
+        
+        if not fields:
+            return
+            
+        params.append(ticker_id)
+        sql = f"UPDATE tickers SET {', '.join(fields)} WHERE id = ?"
+        conn.execute(sql, params)
+        conn.commit()
     finally:
         conn.close()
 
@@ -211,7 +256,7 @@ def query_dividends(filters: str = "", params: Tuple = ()) -> List[sqlite3.Row]:
     ``params`` are the parameters for the placeholders.
     """
     sql = (
-        "SELECT d.*, t.symbol, t.current_price, p.close_price "
+        "SELECT d.*, t.symbol, t.current_price, t.market_cap, t.payout_ratio, t.eps_ttm, t.pe_ratio, t.industry, p.close_price "
         "FROM dividends d "
         "JOIN tickers t ON d.ticker_id = t.id "
         "LEFT JOIN prices p ON d.ticker_id = p.ticker_id AND d.ex_date = p.ex_date "
