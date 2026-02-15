@@ -213,9 +213,13 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
         current_year = datetime.now().year
         yearly_totals = group[group['year'] < current_year].groupby('year')['amount'].sum().sort_index()
         
+        # Skip if no data
+        if len(yearly_totals) == 0:
+            continue
+        
         # Classification - fill missing years with 0
-        min_year = yearly_totals.index.min()
-        max_year = yearly_totals.index.max()
+        min_year = int(yearly_totals.index.min())
+        max_year = int(yearly_totals.index.max())
         full_year_range = pd.Series(0.0, index=range(min_year, max_year + 1))
         full_year_range.update(yearly_totals.astype(float))
         yearly_totals_list = full_year_range.tolist()
