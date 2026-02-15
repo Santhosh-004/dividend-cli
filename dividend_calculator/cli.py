@@ -208,11 +208,20 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
         if max_yield is not None and last_yield > max_yield:
             continue
             
-        # Yearly totals for CAGR and classifications
-        yearly_totals = group.groupby('year')['amount'].sum().sort_index()
+        # Yearly totals for CAGR and classifications - exclude current year
+        from datetime import datetime
+        current_year = datetime.now().year
+        yearly_totals = group[group['year'] < current_year].groupby('year')['amount'].sum().sort_index()
+        
+        # Classification - fill missing years with 0
+        min_year = yearly_totals.index.min()
+        max_year = yearly_totals.index.max()
+        full_year_range = pd.Series(0.0, index=range(min_year, max_year + 1))
+        full_year_range.update(yearly_totals.astype(float))
+        yearly_totals_list = full_year_range.tolist()
         
         # Classification
-        up, stalled, reduced, stopped = utils.classify_years(yearly_totals.tolist())
+        up, stalled, reduced, stopped = utils.classify_years(yearly_totals_list)
         
         if years_up is not None and up < years_up:
             continue
@@ -223,14 +232,8 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
         if years_stopped is not None and stopped > years_stopped:
             continue
             
-        # CAGRs
-        cagr_overall = 0.0
-        if len(yearly_totals) >= 2:
-            first_val = yearly_totals.iloc[0]
-            last_val = yearly_totals.iloc[-1]
-            num_years = yearly_totals.index[-1] - yearly_totals.index[0]
-            if num_years > 0:
-                cagr_overall = utils.cagr(first_val, last_val, num_years)
+        # CAGRs - use get_cagr_for_years for consistency with stats
+        cagr_overall = get_cagr_for_years(yearly_totals, yearly_totals.index[-1] - yearly_totals.index[0]) if len(yearly_totals) >= 2 else 0
         
         if cagr_min is not None and cagr_overall < cagr_min:
             continue
