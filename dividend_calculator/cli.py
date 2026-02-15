@@ -334,32 +334,25 @@ def stats(symbol):
         click.echo(tabulate([(s['ex_date'], f"{s['numerator']}:{s['denominator']}") for s in splits], 
                            headers=["Ex‑Date", "Ratio"], tablefmt="simple"))
     
-    # Yearly summary - use raw_amount for display
-    yearly_series = df.groupby('year')['raw_amount'].sum().sort_index()
-    yearly = df.groupby('year').agg({
-        'raw_amount': 'sum',
-        'id': 'count'
-    }).rename(columns={'raw_amount': 'amount', 'id': 'count'}).sort_index(ascending=False)
-    
-    click.echo("\nYearly Totals (Raw - what was actually paid):")
-    click.echo(tabulate(yearly, headers="keys", tablefmt="simple"))
-    
     # For CAGR and classification, use forward-adjusted to show growth of 1 original share
     yearly_forward = df.groupby('year')['amount'].sum().sort_index()
     
-    # Show forward-adjusted yearly totals
-    yearly_forward_df = df.groupby('year').agg({
-        'amount': 'sum',
+    # Show yearly totals - get raw, shares at time, and count
+    yearly_data = df.groupby('year').agg({
+        'raw_amount': 'sum',
+        'splits_at_time': 'first',
         'id': 'count'
-    }).rename(columns={'amount': 'forward_amount', 'id': 'count'}).sort_index(ascending=False)
+    }).sort_index(ascending=False)
     
-    # Merge with raw amounts
-    yearly_combined = yearly_forward_df.copy()
-    yearly_combined['raw_amount'] = yearly['amount']
-    yearly_combined = yearly_combined[['raw_amount', 'forward_amount', 'count']]
-    yearly_combined.columns = ['Raw', 'Forward (1 share)', 'Count']
+    # Calculate consolidated = raw * shares at that time
+    yearly_combined = pd.DataFrame({
+        'Raw': yearly_data['raw_amount'],
+        'Shares': yearly_data['splits_at_time'],
+        'Consolidated': yearly_data['raw_amount'] * yearly_data['splits_at_time'],
+        'Dividends Announced': yearly_data['id']
+    })
     
-    click.echo("\nYearly Totals (Forward-Adjusted - total from 1 original share):")
+    click.echo("\nYearly Totals (Consolidated):")
     click.echo(tabulate(yearly_combined, headers="keys", tablefmt="simple"))
     
     # Exclude current year from CAGR calculation (use completed years only)
