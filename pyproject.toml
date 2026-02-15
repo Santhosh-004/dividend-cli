@@ -4,12 +4,28 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dividend-calculator"
-version = "0.1.0"
-description = "Indian stock dividend calculator and filter"
+version = "1.0.0"
+description = "Indian stock dividend calculator and filter CLI"
 readme = "README.md"
 requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Santhosh G", email = "santhoshg0004@gmail.com"}
+]
+keywords = ["dividend", "stock", "india", "nse", "cli", "investment", "finance"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial",
+]
 dependencies = [
-    "yfinance",
     "pandas",
     "click",
     "tabulate",
@@ -17,9 +33,28 @@ dependencies = [
     "requests",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
 [project.scripts]
 dividend-cli = "dividend_calculator.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Santhosh-004/dividend-cli"
+Repository = "https://github.com/Santhosh-004/dividend-cli"
+Issues = "https://github.com/Santhosh-004/dividend-cli/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["dividend_calculator*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

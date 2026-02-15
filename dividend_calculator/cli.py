@@ -15,8 +15,11 @@ from . import db
 from . import fetch
 from . import utils
 
+__version__ = "1.0.0"
+
 
 @click.group()
+@click.version_option(version=__version__, prog_name="dividend-cli")
 def main():
     """Indian Stock Dividend Calculator & Filter CLI."""
     pass
