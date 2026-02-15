@@ -39,11 +39,11 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --onefile --console `
-            --name ${{ matrix.executable_name }} `
-            --distpath ./dist/${{ matrix.artifact_name }} `
-            --workpath ./build `
-            dividend_calculator/cli.py
+          pyinstaller --onefile --console \
+            --name ${{ matrix.executable_name }} \
+            --distpath ./dist/${{ matrix.artifact_name }} \
+            --workpath ./build \
+            run.py
         shell: bash
 
       - name: Create zip archive
