@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -69,11 +72,19 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: 'dividend-cli-*'
+          merge-multiple: false
+
+      - name: List files
+        run: ls -la artifacts/
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*/*.zip
+          files: |
+            artifacts/dividend-cli-windows-zip/*.zip
+            artifacts/dividend-cli-linux-zip/*.zip
+            artifacts/dividend-cli-macos-zip/*.zip
           generate_release_notes: true
           draft: false
         env:
