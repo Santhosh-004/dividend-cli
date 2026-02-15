@@ -42,13 +42,16 @@ jobs:
           pyinstaller --onefile --console --name ${{ matrix.executable_name }} --distpath dist/${{ matrix.artifact_name }} --workpath build run.py
 
       - name: Create zip archive
+        if: matrix.os != 'windows-latest'
         run: |
           cd dist
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            powershell -Command "Compress-Archive -Path '${{ matrix.artifact_name }}/*' -DestinationPath '${{ matrix.artifact_name }}.zip'"
-          else
-            zip -r ${{ matrix.artifact_name }}.zip ${{ matrix.artifact_name }}
-          fi
+          zip -r ${{ matrix.artifact_name }}.zip ${{ matrix.artifact_name }}
+
+      - name: Create zip archive (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd dist
+          powershell -Command "Compress-Archive -Path '${{ matrix.artifact_name }}/*' -DestinationPath '${{ matrix.artifact_name }}.zip'"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
