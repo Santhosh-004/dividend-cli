@@ -24,10 +24,14 @@ A powerful CLI tool designed for Indian equity investors to track, analyze, and 
 1. **Download** the zip file for your OS from [Releases](https://github.com/Santhosh-004/dividend-cli/releases)
 2. **Extract** the zip file
 3. **Run** the executable:
+   - Windows: `dividend-cli.exe update`
+   - Linux/Mac: `./dividend-cli update`
+
+   This will download the dividend data to `dividend.db` in the same folder.
+
+4. **Now you can view stats**:
    - Windows: `dividend-cli.exe stats HDFCBANK.NS`
    - Linux/Mac: `./dividend-cli stats HDFCBANK.NS`
-
-The database (`dividends.db`) will be created automatically in the same folder as the executable on first run.
 
 ### Option 2: From Source (Python Required)
 
