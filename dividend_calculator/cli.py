@@ -189,6 +189,20 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
             if yields:
                 last_yield = sum(yields) / len(yields)
         
+        # Calculate 5-year average yield
+        five_yr_ago = current_year - 5
+        five_yr_divs = group[(group['year'] >= five_yr_ago) & (group['year'] < current_year)]
+        
+        five_yr_yield = 0
+        if len(five_yr_divs) > 0:
+            yields = []
+            raw_col = 'raw_amount' if 'raw_amount' in five_yr_divs.columns else 'amount'
+            for _, row in five_yr_divs.iterrows():
+                if pd.notna(row.get('close_price')) and pd.notna(row.get(raw_col)):
+                    yields.append(utils.dividend_yield(float(row[raw_col]), float(row.get('close_price'))))
+            if yields:
+                five_yr_yield = sum(yields) / len(yields)
+        
         if min_yield is not None and last_yield < min_yield:
             continue
         if max_yield is not None and last_yield > max_yield:
@@ -243,6 +257,7 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
                 'reduced': reduced, 'years_reduced': reduced,
                 'stopped': stopped, 'years_stopped': stopped,
                 'yield': last_yield, 'last_yield': last_yield,
+                'yield_5yr': five_yr_yield, 'five_yr_yield': five_yr_yield,
                 'cagr': cagr_overall, 'cagr_overall': cagr_overall,
                 'c3': c3 or 0, 'c5': c5 or 0, 'c10': c10 or 0,
                 'c15': c15 or 0, 'c20': c20 or 0, 'c30': c30 or 0,
@@ -261,6 +276,7 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
             "Price": round(curr_price, 2) if curr_price is not None else "N/A",
             "Shares": round(final_shares, 2),
             "Yield (%)": round(last_yield, 2),
+            "Yield 5Yr (%)": round(five_yr_yield, 2),
             "CAGR Overall (%)": round(cagr_overall, 2),
             "3Yr": round(c3, 2) if c3 is not None else "N/A",
             "5Yr": round(c5, 2) if c5 is not None else "N/A",
@@ -301,6 +317,7 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
         click.echo("  Price            : Current market price (raw)")
         click.echo("  Shares           : How many shares 1 original share has become via splits")
         click.echo("  Yield (%)        : Average yield of last year's dividends (Raw Dividend / Raw Price * 100)")
+        click.echo("  Yield 5Yr (%)   : Average yield over last 5 years (Raw Dividend / Raw Price * 100)")
         click.echo("  CAGR Overall (%) : Growth of total payout from 1 original share")
         click.echo("  3Yr, 5Yr, etc    : Growth rate of total payout for last N years")
         click.echo("  Yrs Up           : Years where total payout was GREATER than prev year")
