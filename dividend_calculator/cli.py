@@ -64,25 +64,31 @@ def update(force, max_age, limit):
 def get_cagr_for_years(yearly_totals: pd.Series, years: int) -> Optional[float]:
     """Helper to calculate CAGR for the last N years.
     
-    Finds the first year with non-zero dividend data within the last N years
-    and calculates CAGR from that year to the last year.
+    Fills in any missing years within the period with 0, then calculates CAGR
+    from the first non-zero value to the last year. Only returns a value if
+    the stock has been paying dividends for at least 'years' number of years.
     """
     if len(yearly_totals) < 2:
         return None
     
     last_year = yearly_totals.index[-1]
+    first_dividend_year = yearly_totals.index[0]
     start_year = last_year - years
     
-    # Find the first year >= start_year that has data
-    valid_years = yearly_totals[yearly_totals.index >= start_year]
-    
-    if len(valid_years) < 2:
+    if first_dividend_year > start_year:
         return None
     
-    first_val = valid_years.iloc[0]
-    first_year = valid_years.index[0]
-    last_val = valid_years.iloc[-1]
-    actual_years = last_year - first_year
+    full_range = pd.Series(0.0, index=range(start_year, last_year + 1))
+    full_range.update(yearly_totals.astype(float))
+    
+    non_zero_vals = full_range[full_range > 0]
+    if len(non_zero_vals) < 2:
+        return None
+    
+    first_val = non_zero_vals.iloc[0]
+    first_non_zero_year = non_zero_vals.index[0]
+    last_val = full_range.iloc[-1]
+    actual_years = last_year - first_non_zero_year
     
     if actual_years <= 0 or first_val <= 0:
         return None
@@ -373,8 +379,12 @@ def stats(symbol):
     ]
     click.echo(tabulate([(n, f"{v:.2f}%" if v else "N/A") for n, v in cagrs], headers=["Period", "CAGR"], tablefmt="simple"))
     
-    # Yearly changes classification - use forward-adjusted for growth tracking (exclude current year)
-    yearly_forward_complete_list = yearly_forward_complete.tolist()
+    # Yearly changes classification - fill missing years with 0 for accurate counts
+    min_year = yearly_forward_complete.index.min()
+    max_year = yearly_forward_complete.index.max()
+    full_year_range = pd.Series(0.0, index=range(min_year, max_year + 1))
+    full_year_range.update(yearly_forward_complete.astype(float))
+    yearly_forward_complete_list = full_year_range.tolist()
     up, stalled, reduced, stopped = utils.classify_years(yearly_forward_complete_list)
     click.echo("\nYear-over-Year Summary:")
     click.echo(f"Years Up:      {up}")
