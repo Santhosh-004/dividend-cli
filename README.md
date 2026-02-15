@@ -1,12 +1,17 @@
 # 📈 Indian Stock Dividend Calculator & Filter
 
-A powerful CLI tool designed for Indian equity investors to track, analyze, and filter stocks based on their complete dividend history. Unlike standard screeners, this tool handles **stock splits** using a **Forward-Adjusted Model**, showing you the true growth of a single original share over decades.
+A powerful CLI tool designed for Indian equity investors to track, analyze, and filter stocks based on their complete dividend history. Unlike standard screeners, this tool handles **stock splits** correctly, showing you both the raw historical dividends and the true growth of a single original share.
 
 ## 🚀 Key Features
 
 - **Automated Data Pipeline**: Fetches the complete NSE ticker list and sources deep dividend/price history directly from Yahoo Finance APIs.
-- **Split-Adjusted Analysis (Forward Model)**: Automatically detects stock splits (2:1, 5:1, 10:1, etc.) and calculates the growth of **1 original share**. 
-  - *Example*: See how 1 share of HDFC Bank bought in 1997 has grown in total payout as it multiplied into 20 shares.
+- **Dual Dividend View**:
+  - **Raw**: What was actually paid per share at that time (matches company filings)
+  - **Forward-Adjusted**: Total payout from 1 original share (shows true growth)
+- **Correct Split Handling**: Properly handles stock splits by converting Yahoo's backward-adjusted data to raw, then forward-adjusting correctly.
+- **Smart CAGR**: 
+  - Excludes current year (incomplete data)
+  - Skips zero-dividend years for accurate growth calculation
 - **Multi-Period Dividend CAGR**: View Compounded Annual Dividend Growth Rates for 3, 5, 10, 15, 20, and 30-year durations.
 - **Consistency Tracking**: Track years where dividends were **Increased (Up)**, **Stalled (Flat)**, **Reduced**, or **Stopped**.
 - **Power-User Filtering**: Use standard flags or execute arbitrary Python-style conditions for complex research.
@@ -59,17 +64,29 @@ Use the `--condition` flag to run complex mathematical logic.
 # Find stocks where Dividend growth years outpace stalled/stopped years by 2x
 dividend-cli filter --condition "(years-stopped + years-stalled) * 2 <= years-up"
 
-# Find stocks where 3Yr Dividend growth is strictly better than 10Yr Dividend growth
+# Find stocks where 3Yr Dividend growth is strictly better than 10Yr growth
 dividend-cli filter --condition "c3 > c10"
 ```
 
 ### 4. Detailed Ticker Stats
-See the full split-adjusted journey of a specific ticker.
+See the full dividend journey of a specific ticker with both raw and forward-adjusted data.
 ```bash
 dividend-cli stats HDFCBANK.NS
 ```
 
-## 📊 Filter Variables Reference
+## 📊 Output Explanation
+
+### Stats Command
+The `stats` command shows:
+
+1. **Yearly Totals (Raw)**: What was actually paid per share at that time - matches company filings exactly.
+2. **Yearly Totals (Forward)**: Total dividend from 1 original share - shows true wealth creation.
+3. **CAGR**: Compound annual growth rate, calculated excluding:
+   - Current year (incomplete data)
+   - Years with zero dividends
+4. **Recent Payments**: Shows raw amount, forward-adjusted amount, and number of shares at that time.
+
+### Filter Variables Reference
 When using the `--condition` flag, you can use the following variables:
 
 | Variable | Description |
@@ -86,13 +103,27 @@ When using the `--condition` flag, you can use the following variables:
 
 ## 🧠 How it Works
 
-- **Reliability**: Uses direct Yahoo Finance Chart API calls to bypass common `yfinance` connectivity and rate-limit issues.
-- **Fuzzy Price Matching**: Uses `bisect` algorithms to find the closest market price for ex-dividend dates (handling holidays/weekends).
-- **Forward Model**: Unlike backward-adjusted prices (which make historical dividends look like fractions of a paisa), our model multiplies the dividend by the split factor to show the **total payout per original share**.
+### Data Adjustment Process
+
+1. **Yahoo Finance Data**: Yahoo provides backward-adjusted dividends (divided by splits).
+2. **Convert to Raw**: Multiply by splits that happened AFTER each dividend date to get what was actually paid.
+3. **Forward Adjust**: Multiply by cumulative splits AT THAT TIME to show total from 1 original share.
+
+**Example with HDFC Bank:**
+- 1997: Raw ₹0.80 (1 share), Forward ₹0.80 (1 share)
+- 2012: Raw ₹4.30 (per share), Forward ₹21.50 (5 shares)
+- 2022: Raw ₹15.50 (per share), Forward ₹155.00 (10 shares)
+
+### Why This Matters
+
+- **Raw dividends** match company filings exactly - useful for verification
+- **Forward-adjusted** shows true dividend growth per original share - useful for long-term analysis
+- **CAGR excludes incomplete years** - gives accurate growth picture
+- **Skips zero-dividend years** - avoids false dips in growth (e.g., RBI dividend ban in 2020)
 
 ## 📋 Requirements
 - Python 3.9+
-- `pandas`, `click`, `tabulate`, `tqdm`, `requests`, `yfinance`
+- `pandas`, `click`, `tabulate`, `tqdm`, `requests`
 
 ---
 *Disclaimer: This tool is for educational and research purposes only. Always verify data with official exchange filings before making investment decisions.*

@@ -59,18 +59,32 @@ def update(force, max_age, limit):
 
 
 def get_cagr_for_years(yearly_totals: pd.Series, years: int) -> Optional[float]:
-    """Helper to calculate CAGR for the last N years."""
+    """Helper to calculate CAGR for the last N years.
+    
+    Finds the first year with non-zero dividend data within the last N years
+    and calculates CAGR from that year to the last year.
+    """
     if len(yearly_totals) < 2:
         return None
     
     last_year = yearly_totals.index[-1]
     start_year = last_year - years
     
-    if start_year in yearly_totals.index:
-        first_val = yearly_totals.loc[start_year]
-        last_val = yearly_totals.loc[last_year]
-        return utils.cagr(first_val, last_val, years)
-    return None
+    # Find the first year >= start_year that has data
+    valid_years = yearly_totals[yearly_totals.index >= start_year]
+    
+    if len(valid_years) < 2:
+        return None
+    
+    first_val = valid_years.iloc[0]
+    first_year = valid_years.index[0]
+    last_val = valid_years.iloc[-1]
+    actual_years = last_year - first_year
+    
+    if actual_years <= 0 or first_val <= 0:
+        return None
+    
+    return utils.cagr(first_val, last_val, actual_years)
 
 
 @main.command()
@@ -149,8 +163,11 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
         for s in all_splits:
             final_shares *= (s['numerator'] / s['denominator'])
 
-        # Calculate yield
-        group['yield'] = group.apply(lambda r: utils.dividend_yield(r['amount'], r['close_price']) if r['close_price'] else 0, axis=1)
+        # Calculate yield using raw amounts (raw dividend / raw price)
+        group['yield'] = group.apply(
+            lambda r: utils.dividend_yield(r.get('raw_amount', r['amount']), r['close_price']) if r['close_price'] else 0, 
+            axis=1
+        )
         avg_yield = group['yield'].mean()
         
         if min_yield is not None and avg_yield < min_yield:
@@ -308,40 +325,68 @@ def stats(symbol):
         click.echo(tabulate([(s['ex_date'], f"{s['numerator']}:{s['denominator']}") for s in splits], 
                            headers=["Ex‑Date", "Ratio"], tablefmt="simple"))
     
-    # Yearly summary
-    yearly_series = df.groupby('year')['amount'].sum().sort_index()
+    # Yearly summary - use raw_amount for display
+    yearly_series = df.groupby('year')['raw_amount'].sum().sort_index()
     yearly = df.groupby('year').agg({
-        'amount': 'sum',
+        'raw_amount': 'sum',
         'id': 'count'
-    }).rename(columns={'id': 'count'}).sort_index(ascending=False)
+    }).rename(columns={'raw_amount': 'amount', 'id': 'count'}).sort_index(ascending=False)
     
-    click.echo("\nYearly Totals:")
+    click.echo("\nYearly Totals (Raw - what was actually paid):")
     click.echo(tabulate(yearly, headers="keys", tablefmt="simple"))
     
-    click.echo("\nCAGR Stats:")
+    # For CAGR and classification, use forward-adjusted to show growth of 1 original share
+    yearly_forward = df.groupby('year')['amount'].sum().sort_index()
+    
+    # Show forward-adjusted yearly totals
+    yearly_forward_df = df.groupby('year').agg({
+        'amount': 'sum',
+        'id': 'count'
+    }).rename(columns={'amount': 'forward_amount', 'id': 'count'}).sort_index(ascending=False)
+    
+    # Merge with raw amounts
+    yearly_combined = yearly_forward_df.copy()
+    yearly_combined['raw_amount'] = yearly['amount']
+    yearly_combined = yearly_combined[['raw_amount', 'forward_amount', 'count']]
+    yearly_combined.columns = ['Raw', 'Forward (1 share)', 'Count']
+    
+    click.echo("\nYearly Totals (Forward-Adjusted - total from 1 original share):")
+    click.echo(tabulate(yearly_combined, headers="keys", tablefmt="simple"))
+    
+    # Exclude current year from CAGR calculation (use completed years only)
+    from datetime import datetime
+    current_year = datetime.now().year
+    yearly_forward_complete = yearly_forward[yearly_forward.index < current_year]
+    
+    click.echo(f"\nCAGR Stats (Forward-Adjusted, excluding {current_year}):")
     cagrs = [
-        ("Overall", get_cagr_for_years(yearly_series, yearly_series.index[-1] - yearly_series.index[0]) if len(yearly_series) > 1 else 0),
-        ("3 Year", get_cagr_for_years(yearly_series, 3)),
-        ("5 Year", get_cagr_for_years(yearly_series, 5)),
-        ("10 Year", get_cagr_for_years(yearly_series, 10)),
-        ("15 Year", get_cagr_for_years(yearly_series, 15)),
-        ("20 Year", get_cagr_for_years(yearly_series, 20)),
-        ("30 Year", get_cagr_for_years(yearly_series, 30)),
+        ("Overall", get_cagr_for_years(yearly_forward_complete, yearly_forward_complete.index[-1] - yearly_forward_complete.index[0]) if len(yearly_forward_complete) > 1 else 0),
+        ("3 Year", get_cagr_for_years(yearly_forward_complete, 3)),
+        ("5 Year", get_cagr_for_years(yearly_forward_complete, 5)),
+        ("10 Year", get_cagr_for_years(yearly_forward_complete, 10)),
+        ("15 Year", get_cagr_for_years(yearly_forward_complete, 15)),
+        ("20 Year", get_cagr_for_years(yearly_forward_complete, 20)),
+        ("30 Year", get_cagr_for_years(yearly_forward_complete, 30)),
     ]
     click.echo(tabulate([(n, f"{v:.2f}%" if v else "N/A") for n, v in cagrs], headers=["Period", "CAGR"], tablefmt="simple"))
     
-    # Yearly changes classification
-    up, stalled, reduced, stopped = utils.classify_years(yearly_series.tolist())
+    # Yearly changes classification - use forward-adjusted for growth tracking (exclude current year)
+    yearly_forward_complete_list = yearly_forward_complete.tolist()
+    up, stalled, reduced, stopped = utils.classify_years(yearly_forward_complete_list)
     click.echo("\nYear-over-Year Summary:")
     click.echo(f"Years Up:      {up}")
     click.echo(f"Years Stalled: {stalled}")
     click.echo(f"Years Reduced: {reduced}")
     click.echo(f"Years Stopped: {stopped}")
     
-    # Recent dividends
-    click.echo("\nRecent Payments:")
-    click.echo(tabulate(df.sort_values('ex_date', ascending=False).head(10)[['ex_date', 'amount', 'close_price']], 
-                        headers=['Ex‑Date', 'Amount', 'Price'], tablefmt='simple'))
+    # Recent dividends - show both raw and forward amounts
+    click.echo("\nRecent Payments (Raw & Forward-Adjusted):")
+    recent = df.sort_values('ex_date', ascending=False).head(10)[['ex_date', 'raw_amount', 'amount', 'splits_at_time']].copy()
+    recent['ex_date'] = recent['ex_date'].dt.strftime('%Y-%m-%d')
+    recent = recent.rename(columns={'amount': 'forward', 'raw_amount': 'raw', 'splits_at_time': 'shares'})
+    recent = recent[['ex_date', 'raw', 'forward', 'shares']]
+    click.echo(tabulate(recent, 
+                        headers=['Ex‑Date', 'Raw', 'Forward', 'Shares'], tablefmt='simple'))
 
 if __name__ == "__main__":
     main()

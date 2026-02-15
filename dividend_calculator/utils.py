@@ -56,38 +56,55 @@ def classify_years(yearly_totals: Sequence[float]) -> Tuple[int, int, int, int]:
 
 
 def adjust_dividends(dividends: List[dict], splits: List[dict]) -> List[dict]:
-    """Adjust dividend amounts forward (Growth of 1 Original Share).
+    """Adjust dividend amounts: Yahoo backward-adjusted -> RAW -> Forward-adjusted.
     
-    This model assumes you bought 1 share at the beginning. As splits occur, 
-    your share count increases, and so does your total dividend received.
+    Yahoo Finance provides BACKWARD-ADJUSTED dividends (divided by splits).
+    This function converts them to:
+    1. RAW: What was actually paid per share at that time
+    2. Forward-adjusted: Total payout from 1 original share at that time
     
-    Formula: Adjusted Amount = Raw Amount * (Cumulative Split Ratio at that time)
+    Step 1 (Yahoo -> RAW): Multiply by splits AFTER the dividend date
+    Step 2 (RAW -> Forward): Multiply by cumulative splits AT THAT TIME
+    
+    The 'amount' field will be forward-adjusted (total from 1 original share at that time).
     """
-    # Sort everything chronologically
     sorted_splits = sorted(splits, key=lambda x: x['ex_date'])
     sorted_divs = sorted(dividends, key=lambda x: x['ex_date'])
     
     adjusted = []
-    current_multiplier = 1.0
-    split_idx = 0
     
     for div in sorted_divs:
-        # Apply all splits that happened BEFORE or ON this dividend ex-date
-        # Note: Usually splits happen on the ex-date morning.
-        while split_idx < len(sorted_splits) and sorted_splits[split_idx]['ex_date'] <= div['ex_date']:
-            split = sorted_splits[split_idx]
-            current_multiplier *= (split['numerator'] / split['denominator'])
-            split_idx += 1
-            
-        new_div = dict(div)
-        new_div['amount'] = div['amount'] * current_multiplier
-        # We also store the multiplier for later reference (e.g. for price/yield)
-        new_div['multiplier'] = current_multiplier
+        # Calculate splits AFTER this dividend date (for RAW conversion)
+        # Yahoo backward-adjusts by dividing by these splits, so we multiply to reverse
+        splits_after = 1.0
+        # Calculate cumulative splits AT THIS TIME (for forward adjustment)
+        splits_at_time = 1.0
         
-        # Note: Yield is ALWAYS (Raw Amount / Raw Price). 
-        # If we adjust both by the same multiplier, the ratio stays the same.
+        for split in sorted_splits:
+            if split['ex_date'] > div['ex_date']:
+                splits_after *= (split['numerator'] / split['denominator'])
+            elif split['ex_date'] <= div['ex_date']:
+                splits_at_time *= (split['numerator'] / split['denominator'])
+        
+        new_div = dict(div)
+        
+        # Step 1: Yahoo backward-adjusted -> RAW
+        # Multiply by splits that happen AFTER this dividend date
+        raw_amount = div['amount'] * splits_after
+        
+        # Step 2: RAW -> Forward-adjusted (total from 1 original share at that time)
+        # Multiply by cumulative splits AT THAT TIME
+        forward_amount = raw_amount * splits_at_time
+        
+        new_div['amount'] = forward_amount
+        new_div['raw_amount'] = raw_amount
+        new_div['splits_at_time'] = splits_at_time
+        
         if div.get('close_price'):
-            new_div['close_price'] = div['close_price'] * current_multiplier
+            # Yahoo prices are also backward-adjusted, so convert to raw the same way
+            # Multiply by splits AFTER to get the raw historical price
+            raw_price = div['close_price'] * splits_after
+            new_div['close_price'] = raw_price
             
         adjusted.append(new_div)
         
