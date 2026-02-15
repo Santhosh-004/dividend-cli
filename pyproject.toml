@@ -38,6 +38,9 @@ dev = [
     "pytest",
     "ruff",
 ]
+build = [
+    "pyinstaller>=6.0",
+]
 
 [project.scripts]
 dividend-cli = "dividend_calculator.cli:main"

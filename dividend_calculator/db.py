@@ -4,11 +4,25 @@ Provides a thin wrapper around SQLite with helper functions to create the
 schema, insert data and run queries needed by the CLI.
 """
 
+import sys
 import sqlite3
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 
-DB_PATH = Path(__file__).resolve().parent / "dividends.db"
+def get_app_dir():
+    """Get the directory where the app data should be stored.
+    
+    When running as a frozen executable, use the directory containing the executable.
+    When running normally, use the package directory.
+    """
+    if getattr(sys, 'frozen', False):
+        # Running as compiled executable
+        return Path(sys.executable).parent.resolve()
+    else:
+        # Running as normal Python script
+        return Path(__file__).resolve().parent
+
+DB_PATH = get_app_dir() / "dividends.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tickers (
