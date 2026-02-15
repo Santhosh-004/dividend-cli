@@ -172,36 +172,36 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
         for s in all_splits:
             final_shares *= (s['numerator'] / s['denominator'])
 
-        # Calculate yield - average of last year's dividend yields
+        # Calculate yield - total dividend of year / price on last dividend date
         from datetime import datetime
         current_year = datetime.now().year
         last_year = current_year - 1
         
-        last_year_divs = group[group['year'] == last_year]
+        last_year_divs = group[group['year'] == last_year].sort_values('ex_date')
         
         last_yield = 0
         if len(last_year_divs) > 0:
-            yields = []
             raw_col = 'raw_amount' if 'raw_amount' in last_year_divs.columns else 'amount'
-            for _, row in last_year_divs.iterrows():
-                if pd.notna(row.get('close_price')) and pd.notna(row.get(raw_col)):
-                    yields.append(utils.dividend_yield(float(row[raw_col]), float(row.get('close_price'))))
-            if yields:
-                last_yield = sum(yields) / len(yields)
+            total_div = last_year_divs[raw_col].sum()
+            last_div_row = last_year_divs.iloc[-1]
+            if pd.notna(last_div_row.get('close_price')) and pd.notna(total_div):
+                last_yield = utils.dividend_yield(float(total_div), float(last_div_row.get('close_price')))
         
         # Calculate 5-year average yield
         five_yr_ago = current_year - 5
-        five_yr_divs = group[(group['year'] >= five_yr_ago) & (group['year'] < current_year)]
         
         five_yr_yield = 0
-        if len(five_yr_divs) > 0:
-            yields = []
-            raw_col = 'raw_amount' if 'raw_amount' in five_yr_divs.columns else 'amount'
-            for _, row in five_yr_divs.iterrows():
-                if pd.notna(row.get('close_price')) and pd.notna(row.get(raw_col)):
-                    yields.append(utils.dividend_yield(float(row[raw_col]), float(row.get('close_price'))))
-            if yields:
-                five_yr_yield = sum(yields) / len(yields)
+        yearly_yields = []
+        for yr in range(five_yr_ago, current_year):
+            yr_divs = group[group['year'] == yr].sort_values('ex_date')
+            if len(yr_divs) > 0:
+                raw_col = 'raw_amount' if 'raw_amount' in yr_divs.columns else 'amount'
+                total_div = yr_divs[raw_col].sum()
+                last_div_row = yr_divs.iloc[-1]
+                if pd.notna(last_div_row.get('close_price')) and pd.notna(total_div):
+                    yearly_yields.append(utils.dividend_yield(float(total_div), float(last_div_row.get('close_price'))))
+        if yearly_yields:
+            five_yr_yield = sum(yearly_yields) / len(yearly_yields)
         
         if min_yield is not None and last_yield < min_yield:
             continue
@@ -316,8 +316,8 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
         click.echo("DETAILED COLUMN LEGEND (FORWARD-ADJUSTED MODEL):")
         click.echo("  Price            : Current market price (raw)")
         click.echo("  Shares           : How many shares 1 original share has become via splits")
-        click.echo("  Yield (%)        : Average yield of last year's dividends (Raw Dividend / Raw Price * 100)")
-        click.echo("  Yield 5Yr (%)   : Average yield over last 5 years (Raw Dividend / Raw Price * 100)")
+        click.echo("  Yield (%)        : Last year's total dividend / price on last dividend date * 100")
+        click.echo("  Yield 5Yr (%)   : Average yearly yield over last 5 years (total dividend / price on last dividend date)")
         click.echo("  CAGR Overall (%) : Growth of total payout from 1 original share")
         click.echo("  3Yr, 5Yr, etc    : Growth rate of total payout for last N years")
         click.echo("  Yrs Up           : Years where total payout was GREATER than prev year")
