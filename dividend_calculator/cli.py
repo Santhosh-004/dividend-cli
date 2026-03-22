@@ -96,20 +96,62 @@ def get_cagr_for_years(yearly_totals: pd.Series, years: int) -> Optional[float]:
     return utils.cagr(first_val, last_val, actual_years)
 
 
+def get_yield_cagr_for_years(group: pd.DataFrame, years: int) -> Optional[float]:
+    """Helper to calculate CAGR of dividend yield for the last N years.
+    
+    Calculates yearly dividend yield (total dividend / price on last dividend date)
+    for each year, then calculates CAGR of those yields.
+    """
+    if len(group) < 2:
+        return None
+    
+    current_year = datetime.now().year
+    last_year = current_year - 1
+    start_year = last_year - years
+    
+    yearly_yields = {}
+    for yr in range(start_year, current_year + 1):
+        yr_divs = group[group['year'] == yr].sort_values('ex_date')
+        if len(yr_divs) > 0:
+            raw_col = 'raw_amount' if 'raw_amount' in yr_divs.columns else 'amount'
+            total_div = yr_divs[raw_col].sum()
+            last_div_row = yr_divs.iloc[-1]
+            if pd.notna(last_div_row.get('close_price')) and pd.notna(total_div) and float(last_div_row.get('close_price')) > 0:
+                yield_val = utils.dividend_yield(float(total_div), float(last_div_row.get('close_price')))
+                yearly_yields[yr] = yield_val
+    
+    if len(yearly_yields) < 2:
+        return None
+    
+    sorted_years = sorted(yearly_yields.keys())
+    
+    if sorted_years[-1] - sorted_years[0] < years:
+        return None
+    
+    first_val = yearly_yields[sorted_years[0]]
+    last_val = yearly_yields[sorted_years[-1]]
+    actual_years = sorted_years[-1] - sorted_years[0]
+    
+    if actual_years <= 0 or first_val <= 0:
+        return None
+    
+    return utils.cagr(first_val, last_val, actual_years)
+
+
 @main.command()
 @click.option("--symbol", help="Filter by specific ticker symbol.")
 @click.option("--min-yield", type=float, help="Minimum average dividend yield (%).")
 @click.option("--max-yield", type=float, help="Maximum average dividend yield (%).")
-@click.option("--cagr-min", type=float, help="Minimum overall dividend CAGR (%).")
-@click.option("--cagr-3yr-min", type=float, help="Minimum 3Yr CAGR (%).")
-@click.option("--cagr-5yr-min", type=float, help="Minimum 5Yr CAGR (%).")
-@click.option("--cagr-10yr-min", type=float, help="Minimum 10Yr CAGR (%).")
+@click.option("--div-growth-min", type=float, help="Minimum overall dividend growth (%).")
+@click.option("--div-3yr-min", type=float, help="Minimum 3Yr dividend growth (%).")
+@click.option("--div-5yr-min", type=float, help="Minimum 5Yr dividend growth (%).")
+@click.option("--div-10yr-min", type=float, help="Minimum 10Yr dividend growth (%).")
 @click.option("--years-up", type=int, help="Minimum number of years with dividend growth.")
 @click.option("--years-stalled", type=int, help="Maximum number of years with stalled dividends.")
 @click.option("--years-reduced", type=int, help="Maximum number of years with reduced dividends.")
 @click.option("--years-stopped", type=int, help="Maximum number of years with stopped dividends.")
 @click.option("--condition", help="Arbitrary Python-style condition (e.g. '(years_stopped + years_stalled) * 2 <= years_up')")
-def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, cagr_10yr_min, years_up, years_stalled, years_reduced, years_stopped, condition):
+def filter(symbol, min_yield, max_yield, div_growth_min, div_3yr_min, div_5yr_min, div_10yr_min, years_up, years_stalled, years_reduced, years_stopped, condition):
     """Filter stocks based on dividend criteria."""
     # We'll fetch all dividends and group them in Python for complex CAGR/Year logic
     # though simple filters could be done in SQL.
@@ -187,22 +229,6 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
             if pd.notna(last_div_row.get('close_price')) and pd.notna(total_div):
                 last_yield = utils.dividend_yield(float(total_div), float(last_div_row.get('close_price')))
         
-        # Calculate 5-year average yield
-        five_yr_ago = current_year - 5
-        
-        five_yr_yield = 0
-        yearly_yields = []
-        for yr in range(five_yr_ago, current_year):
-            yr_divs = group[group['year'] == yr].sort_values('ex_date')
-            if len(yr_divs) > 0:
-                raw_col = 'raw_amount' if 'raw_amount' in yr_divs.columns else 'amount'
-                total_div = yr_divs[raw_col].sum()
-                last_div_row = yr_divs.iloc[-1]
-                if pd.notna(last_div_row.get('close_price')) and pd.notna(total_div):
-                    yearly_yields.append(utils.dividend_yield(float(total_div), float(last_div_row.get('close_price'))))
-        if yearly_yields:
-            five_yr_yield = sum(yearly_yields) / len(yearly_yields)
-        
         if min_yield is not None and last_yield < min_yield:
             continue
         if max_yield is not None and last_yield > max_yield:
@@ -239,7 +265,7 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
         # CAGRs - use get_cagr_for_years for consistency with stats
         cagr_overall = get_cagr_for_years(yearly_totals, yearly_totals.index[-1] - yearly_totals.index[0]) if len(yearly_totals) >= 2 else 0
         
-        if cagr_min is not None and cagr_overall < cagr_min:
+        if div_growth_min is not None and cagr_overall < div_growth_min:
             continue
             
         c3 = get_cagr_for_years(yearly_totals, 3)
@@ -247,13 +273,14 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
         c10 = get_cagr_for_years(yearly_totals, 10)
         c15 = get_cagr_for_years(yearly_totals, 15)
         c20 = get_cagr_for_years(yearly_totals, 20)
+        c25 = get_cagr_for_years(yearly_totals, 25)
         c30 = get_cagr_for_years(yearly_totals, 30)
         
-        if cagr_3yr_min is not None and (c3 is None or c3 < cagr_3yr_min):
+        if div_3yr_min is not None and (c3 is None or c3 < div_3yr_min):
             continue
-        if cagr_5yr_min is not None and (c5 is None or c5 < cagr_5yr_min):
+        if div_5yr_min is not None and (c5 is None or c5 < div_5yr_min):
             continue
-        if cagr_10yr_min is not None and (c10 is None or c10 < cagr_10yr_min):
+        if div_10yr_min is not None and (c10 is None or c10 < div_10yr_min):
             continue
 
         # Evaluate arbitrary condition if provided
@@ -264,8 +291,7 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
                 'reduced': reduced, 'years_reduced': reduced,
                 'stopped': stopped, 'years_stopped': stopped,
                 'yield': last_yield, 'last_yield': last_yield,
-                'yield_5yr': five_yr_yield, 'five_yr_yield': five_yr_yield,
-                'cagr': cagr_overall, 'cagr_overall': cagr_overall,
+                'div_growth': cagr_overall, 'div_growth_overall': cagr_overall,
                 'c3': c3 or 0, 'c5': c5 or 0, 'c10': c10 or 0,
                 'c15': c15 or 0, 'c20': c20 or 0, 'c30': c30 or 0,
                 'price': curr_price or 0,
@@ -283,18 +309,18 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
             "Price": round(curr_price, 2) if curr_price is not None else "N/A",
             "Shares": round(final_shares, 2),
             "Yield (%)": round(last_yield, 2),
-            "Yield 5Yr (%)": round(five_yr_yield, 2),
-            "CAGR Overall (%)": round(cagr_overall, 2),
-            "3Yr": round(c3, 2) if c3 is not None else "N/A",
-            "5Yr": round(c5, 2) if c5 is not None else "N/A",
-            "10Yr": round(c10, 2) if c10 is not None else "N/A",
-            "15Yr": round(c15, 2) if c15 is not None else "N/A",
-            "20Yr": round(c20, 2) if c20 is not None else "N/A",
-            "30Yr": round(c30, 2) if c30 is not None else "N/A",
             "Yrs Up": up,
             "Yrs Stalled": stalled,
             "Yrs Reduced": reduced,
-            "Yrs Stopped": stopped
+            "Yrs Stopped": stopped,
+            "Div Growth Overall (%)": round(cagr_overall, 2),
+            "Div 3Yr (%)": round(c3, 2) if c3 is not None else "N/A",
+            "Div 5Yr (%)": round(c5, 2) if c5 is not None else "N/A",
+            "Div 10Yr (%)": round(c10, 2) if c10 is not None else "N/A",
+            "Div 15Yr (%)": round(c15, 2) if c15 is not None else "N/A",
+            "Div 20Yr (%)": round(c20, 2) if c20 is not None else "N/A",
+            "Div 25Yr (%)": round(c25, 2) if c25 is not None else "N/A",
+            "Div 30Yr (%)": round(c30, 2) if c30 is not None else "N/A"
         }
         results.append(res)
         
@@ -324,13 +350,12 @@ def filter(symbol, min_yield, max_yield, cagr_min, cagr_3yr_min, cagr_5yr_min, c
         click.echo("  Price            : Current market price (raw)")
         click.echo("  Shares           : How many shares 1 original share has become via splits")
         click.echo("  Yield (%)        : Last year's total dividend / price on last dividend date * 100")
-        click.echo("  Yield 5Yr (%)   : Average yearly yield over last 5 years (total dividend / price on last dividend date)")
-        click.echo("  CAGR Overall (%) : Growth of total payout from 1 original share")
-        click.echo("  3Yr, 5Yr, etc    : Growth rate of total payout for last N years")
         click.echo("  Yrs Up           : Years where total payout was GREATER than prev year")
         click.echo("  Yrs Stalled      : Years where total payout was EQUAL to prev year")
         click.echo("  Yrs Reduced      : Years where total payout was LOWER than prev year")
         click.echo("  Yrs Stopped      : Years where total payout was ZERO")
+        click.echo("  Div Growth Overall (%) : Dividend growth (CAGR) from first year to last year")
+        click.echo("  Div 3Yr-30Yr    : Dividend growth (CAGR) for last N years")
         click.echo("  --condition      : Arbitrary Python expression using variables above")
         click.echo("                     Example: '(years_stopped + years_stalled) * 2 <= years_up'")
         click.echo("="*40)
@@ -405,6 +430,16 @@ def stats(symbol):
         ("30 Year", get_cagr_for_years(yearly_forward_complete, 30)),
     ]
     click.echo(tabulate([(n, f"{v:.2f}%" if v else "N/A") for n, v in cagrs], headers=["Period", "CAGR"], tablefmt="simple"))
+    
+    click.echo(f"\nYield CAGR (Dividend/Price Growth, excluding {current_year}):")
+    yield_cagrs = [
+        ("10 Year", get_yield_cagr_for_years(df[df['year'] < current_year], 10)),
+        ("15 Year", get_yield_cagr_for_years(df[df['year'] < current_year], 15)),
+        ("20 Year", get_yield_cagr_for_years(df[df['year'] < current_year], 20)),
+        ("25 Year", get_yield_cagr_for_years(df[df['year'] < current_year], 25)),
+        ("30 Year", get_yield_cagr_for_years(df[df['year'] < current_year], 30)),
+    ]
+    click.echo(tabulate([(n, f"{v:.2f}%" if v else "N/A") for n, v in yield_cagrs], headers=["Period", "Yield CAGR"], tablefmt="simple"))
     
     # Yearly changes classification - fill missing years with 0 for accurate counts
     min_year = yearly_forward_complete.index.min()

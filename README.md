@@ -9,10 +9,10 @@ A powerful CLI tool designed for Indian equity investors to track, analyze, and 
   - **Raw**: What was actually paid per share at that time (matches company filings)
   - **Forward-Adjusted**: Total payout from 1 original share (shows true growth)
 - **Correct Split Handling**: Properly handles stock splits by converting Yahoo's backward-adjusted data to raw, then forward-adjusting correctly.
-- **Smart CAGR**: 
+- **Smart Dividend Growth (CAGR)**: 
   - Excludes current year (incomplete data)
   - Skips zero-dividend years for accurate growth calculation
-- **Multi-Period Dividend CAGR**: View Compounded Annual Dividend Growth Rates for 3, 5, 10, 15, 20, and 30-year durations.
+- **Multi-Period Dividend Growth**: View Compounded Annual Dividend Growth Rates for 3, 5, 10, 15, 20, 25, and 30-year durations.
 - **Consistency Tracking**: Track years where dividends were **Increased (Up)**, **Stalled (Flat)**, **Reduced**, or **Stopped**.
 - **Power-User Filtering**: Use standard flags or execute arbitrary Python-style conditions for complex research.
 - **Offline Storage**: All data is persisted in a local SQLite database for blazing-fast filtering and offline access.
@@ -67,8 +67,8 @@ dividend-cli update --limit 50
 Find "Dividend Aristocrats" or high-growth opportunities using robust filters.
 
 ```bash
-# Basic Filter: Min 1.5% yield and 10% 5-year Dividend CAGR
-dividend-cli filter --min-yield 1.5 --cagr-5yr-min 10
+# Basic Filter: Min 1.5% yield and 10% 5-year Dividend Growth
+dividend-cli filter --min-yield 1.5 --div-5yr-min 10
 
 # Consistency Filter: Min 5 years of Dividend growth, Max 1 year of Dividend reduction
 dividend-cli filter --years-up 5 --years-reduced 1
@@ -78,10 +78,10 @@ dividend-cli filter --years-up 5 --years-reduced 1
 Use the `--condition` flag to run complex mathematical logic.
 ```bash
 # Find stocks where Dividend growth years outpace stalled/stopped years by 2x
-dividend-cli filter --condition "(years-stopped + years-stalled) * 2 <= years-up"
+dividend-cli filter --condition "(years_stopped + years_stalled) * 2 <= years_up"
 
 # Find stocks where 3Yr Dividend growth is strictly better than 10Yr growth
-dividend-cli filter --condition "c3 > c10"
+dividend-cli filter --condition "div_3yr > div_10yr"
 ```
 
 ### 4. Detailed Ticker Stats
@@ -111,9 +111,9 @@ When using the `--condition` flag, you can use the following variables:
 | `stalled` / `years_stalled` | Total years dividend remained flat |
 | `reduced` / `years_reduced` | Total years dividend decreased |
 | `stopped` / `years_stopped` | Total years dividend was zero |
-| `yield` / `avg_yield` | Average historical yield (%) |
-| `cagr` / `cagr_overall` | Dividend CAGR since first record |
-| `c3`, `c5`, `c10` ... | Dividend CAGR for last 3, 5, 10, 15, 20, 30 years |
+| `yield` / `last_yield` | Last year's dividend yield (%) |
+| `div_growth` / `div_growth_overall` | Dividend growth (CAGR) since first record |
+| `div_3yr`, `div_5yr`, `div_10yr` ... | Dividend growth (CAGR) for last 3, 5, 10, 15, 20, 25, 30 years |
 | `price` | Current market price |
 | `shares` | Current share count from 1 original share |
 
@@ -134,7 +134,7 @@ When using the `--condition` flag, you can use the following variables:
 
 - **Raw dividends** match company filings exactly - useful for verification
 - **Forward-adjusted** shows true dividend growth per original share - useful for long-term analysis
-- **CAGR excludes incomplete years** - gives accurate growth picture
+- **Dividend Growth excludes incomplete years** - gives accurate growth picture
 - **Skips zero-dividend years** - avoids false dips in growth (e.g., RBI dividend ban in 2020)
 
 ## 📋 Requirements
