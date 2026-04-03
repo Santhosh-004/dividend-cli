@@ -2,6 +2,8 @@ name: Build and Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -41,26 +43,13 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          mkdir -p dist/${{ matrix.artifact_name }}
-          pyinstaller --onefile --console --name ${{ matrix.executable_name }} --distpath dist/${{ matrix.artifact_name }} --workpath build run.py
-
-      - name: Create zip archive
-        if: matrix.os != 'windows-latest'
-        run: |
-          cd dist
-          zip -r ${{ matrix.artifact_name }}.zip ${{ matrix.artifact_name }}
-
-      - name: Create zip archive (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          cd dist
-          powershell -Command "Compress-Archive -Path '${{ matrix.artifact_name }}/*' -DestinationPath '${{ matrix.artifact_name }}.zip'"
+          pyinstaller --onefile --console --name ${{ matrix.executable_name }} --distpath dist --workpath build run.py
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}-zip
-          path: dist/*.zip
+          name: ${{ matrix.artifact_name }}
+          path: dist/${{ matrix.executable_name }}
 
   release:
     needs: build
@@ -72,19 +61,17 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: 'dividend-cli-*'
-          merge-multiple: false
 
       - name: List files
-        run: ls -la artifacts/
+        run: find artifacts -type f
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/dividend-cli-windows-zip/*.zip
-            artifacts/dividend-cli-linux-zip/*.zip
-            artifacts/dividend-cli-macos-zip/*.zip
+            artifacts/dividend-cli-windows/dividend-cli.exe
+            artifacts/dividend-cli-linux/dividend-cli
+            artifacts/dividend-cli-macos/dividend-cli
           generate_release_notes: true
           draft: false
         env:
