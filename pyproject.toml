@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dividend-calculator"
-version = "1.0.0"
+version = "1.0.1"
 description = "Indian stock dividend calculator and filter CLI"
 readme = "README.md"
 requires-python = ">=3.9"

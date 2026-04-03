@@ -22,7 +22,7 @@ from . import db
 from . import fetch
 from . import utils
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 
 @click.group()
