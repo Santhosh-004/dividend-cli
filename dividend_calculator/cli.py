@@ -1,8 +1,15 @@
-"""Command‑line interface for dividend_calculator.
+"""Command-line interface for dividend_calculator.
 
-Provides sub‑commands to update data, filter stocks based on dividend
+Provides sub-commands to update data, filter stocks based on dividend
 performance, and view stats for a single ticker.
 """
+
+import sys
+import io
+
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 import click
 import pandas as pd
@@ -26,18 +33,25 @@ def main():
 
 
 @main.command()
+@click.option("--symbol", help="Update a specific ticker symbol.")
 @click.option("--force", is_flag=True, help="Force update of all tickers.")
 @click.option("--max-age", default=90, help="Maximum age of data in days before refresh.")
 @click.option("--limit", default=None, type=int, help="Limit the number of tickers to update (for testing).")
-def update(force, max_age, limit):
+def update(symbol, force, max_age, limit):
     """Refresh ticker list and fetch missing dividend/price data."""
-    click.echo("Updating ticker list from NSE...")
-    added = fetch.download_nse_tickers()
-    click.echo(f"Added {added} new tickers.")
+    if not symbol:
+        click.echo("Updating ticker list from NSE...")
+        added = fetch.download_nse_tickers()
+        click.echo(f"Added {added} new tickers.")
 
-    tickers = db.get_all_tickers()
-    if limit:
-        tickers = tickers[:limit]
+    if symbol:
+        # Ensure the ticker exists in the DB first
+        db.upsert_ticker(symbol)
+        tickers = [{"symbol": symbol, "last_updated": db.get_ticker_last_updated(db.upsert_ticker(symbol))}]
+    else:
+        tickers = db.get_all_tickers()
+        if limit:
+            tickers = tickers[:limit]
 
     click.echo(f"Checking data for {len(tickers)} tickers...")
     
@@ -57,8 +71,8 @@ def update(force, max_age, limit):
             try:
                 new_div, new_price = fetch.fetch_dividends(symbol)
                 # fetch.fetch_dividends already updates the timestamp in DB
-            except Exception as e:
-                click.echo(f"\nError fetching data for {symbol}: {e}", err=True)
+            except Exception:
+                pass
 
 
 def get_cagr_for_years(yearly_totals: pd.Series, years: int) -> Optional[float]:
@@ -201,7 +215,7 @@ def filter(symbol, min_yield, max_yield, div_growth_min, div_3yr_min, div_5yr_mi
     eval_condition = condition
     if eval_condition:
         # Simple replacement for common user patterns like years-up -> years_up
-        for field in ['years-up', 'years-stalled', 'years-reduced', 'years-stopped', 'avg-yield', 'cagr-overall']:
+        for field in ['years-up', 'years-stalled', 'years-reduced', 'years-stopped', 'cagr-overall']:
             eval_condition = eval_condition.replace(field, field.replace('-', '_'))
 
     for sym, group in df.groupby('symbol'):
@@ -265,6 +279,15 @@ def filter(symbol, min_yield, max_yield, div_growth_min, div_3yr_min, div_5yr_mi
         # CAGRs - use get_cagr_for_years for consistency with stats
         cagr_overall = get_cagr_for_years(yearly_totals, yearly_totals.index[-1] - yearly_totals.index[0]) if len(yearly_totals) >= 2 else 0
         
+        # Calculate Standard Deviation and Coefficient of Variation for dividend stability
+        if len(yearly_totals) >= 2:
+            div_mean = yearly_totals.mean()
+            div_std = yearly_totals.std()
+            div_cv = (div_std / div_mean * 100) if div_mean > 0 else None
+        else:
+            div_std = None
+            div_cv = None
+            
         if div_growth_min is not None and cagr_overall < div_growth_min:
             continue
             
@@ -290,12 +313,20 @@ def filter(symbol, min_yield, max_yield, div_growth_min, div_3yr_min, div_5yr_mi
                 'stalled': stalled, 'years_stalled': stalled,
                 'reduced': reduced, 'years_reduced': reduced,
                 'stopped': stopped, 'years_stopped': stopped,
-                'yield': last_yield, 'last_yield': last_yield,
-                'div_growth': cagr_overall, 'div_growth_overall': cagr_overall,
-                'c3': c3 or 0, 'c5': c5 or 0, 'c10': c10 or 0,
-                'c15': c15 or 0, 'c20': c20 or 0, 'c30': c30 or 0,
+                'yield': last_yield, 'yld': last_yield, 'last_yield': last_yield,
+                'div_growth': cagr_overall, 'div_growth_overall': cagr_overall, 'cagr_overall': cagr_overall,
+                'c3': c3 or 0, 'div_3yr': c3 or 0,
+                'c5': c5 or 0, 'div_5yr': c5 or 0,
+                'c10': c10 or 0, 'div_10yr': c10 or 0,
+                'c15': c15 or 0, 'div_15yr': c15 or 0,
+                'c20': c20 or 0, 'div_20yr': c20 or 0,
+                'c25': c25 or 0, 'div_25yr': c25 or 0,
+                'c30': c30 or 0, 'div_30yr': c30 or 0,
                 'price': curr_price or 0,
-                'shares': final_shares
+                'shares': final_shares,
+                'div_mean': float(div_mean) if div_std is not None else 0,
+                'div_std': float(div_std) if div_std is not None else 0,
+                'div_cv': float(div_cv) if div_cv is not None else 0
             }
             try:
                 if not eval(eval_condition, {"__builtins__": {}}, eval_vars):
@@ -309,6 +340,9 @@ def filter(symbol, min_yield, max_yield, div_growth_min, div_3yr_min, div_5yr_mi
             "Price": round(curr_price, 2) if curr_price is not None else "N/A",
             "Shares": round(final_shares, 2),
             "Yield (%)": round(last_yield, 2),
+            "Div Mean": round(float(div_mean), 2) if div_std is not None else "N/A",
+            "Div StdDev":round(float(div_std), 2) if div_std is not None else "N/A",
+            "Div CV (%)": round(float(div_cv), 2) if div_cv is not None else "N/A",
             "Yrs Up": up,
             "Yrs Stalled": stalled,
             "Yrs Reduced": reduced,
@@ -350,6 +384,11 @@ def filter(symbol, min_yield, max_yield, div_growth_min, div_3yr_min, div_5yr_mi
         click.echo("  Price            : Current market price (raw)")
         click.echo("  Shares           : How many shares 1 original share has become via splits")
         click.echo("  Yield (%)        : Last year's total dividend / price on last dividend date * 100")
+        click.echo("  Div Mean         : Mean (average) of yearly dividend totals")
+        click.echo("  Div StdDev       : Standard deviation of yearly dividend totals (volatility)")
+        click.echo("  Div CV (%)       : Coefficient of Variation = StdDev/Mean*100")
+        click.echo("                     Lower CV = more stable/predictable dividends")
+        click.echo("                     CV <20% = very stable, 20-50% = moderate, >50% = volatile")
         click.echo("  Yrs Up           : Years where total payout was GREATER than prev year")
         click.echo("  Yrs Stalled      : Years where total payout was EQUAL to prev year")
         click.echo("  Yrs Reduced      : Years where total payout was LOWER than prev year")
@@ -430,6 +469,29 @@ def stats(symbol):
         ("30 Year", get_cagr_for_years(yearly_forward_complete, 30)),
     ]
     click.echo(tabulate([(n, f"{v:.2f}%" if v else "N/A") for n, v in cagrs], headers=["Period", "CAGR"], tablefmt="simple"))
+    
+    # Dividend stability metrics (volatility)
+    if len(yearly_forward_complete) >= 2:
+        div_mean = yearly_forward_complete.mean()
+        div_std = yearly_forward_complete.std()
+        div_cv = (div_std / div_mean * 100) if div_mean > 0 else None
+        
+        click.echo(f"\nDividend Stability (Volatility Analysis):")
+        click.echo(f"Mean Yearly Dividend:₹{div_mean:.2f}")
+        click.echo(f"Std Deviation:        ₹{div_std:.2f}")
+        if div_cv is not None:
+            click.echo(f"Coefficient of Var:   {div_cv:.2f}%")
+            if div_cv < 20:
+                stability = "VeryStable"
+            elif div_cv < 50:
+                stability = "Moderate"
+            else:
+                stability = "Volatile"
+            click.echo(f"Stability Rating:     {stability}")
+        else:
+            click.echo("Coefficient of Var:   N/A")
+    else:
+        click.echo("\nDividend Stability: Not enough data (need ≥2 years)")
     
     click.echo(f"\nYield CAGR (Dividend/Price Growth, excluding {current_year}):")
     yield_cagrs = [
