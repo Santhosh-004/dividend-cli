@@ -10,4 +10,6 @@ data, persisting it and allowing the user to filter by yield, CAGR and year‑
 over‑year classifications.
 """
 
-__all__ = ["db", "fetch", "cli", "utils"]
+__version__ = "1.1.0"
+
+__all__ = ["db", "fetch", "cli", "utils", "__version__"]

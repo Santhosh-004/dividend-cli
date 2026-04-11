@@ -1,17 +1,19 @@
 """Data fetching utilities for dividend_calculator.
 
-Uses direct calls to Yahoo Finance API instead of yfinance to avoid
-connectivity issues in restricted environments.
+Uses direct calls to Yahoo Finance API for prices and dividends.
+Also fetches fundamentals from yfinance to avoid expensive scraping.
 """
 
 import csv
 import io
 import time
 import bisect
-from datetime import datetime, timedelta
+import math
+from datetime import datetime
 from typing import List, Tuple, Optional, Dict, Any
 
 import requests
+import yfinance as yf
 from . import db
 
 NSE_CSV_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
@@ -25,6 +27,48 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
     "Accept": "application/json",
 }
+
+
+def _to_float(value: Any) -> Optional[float]:
+    """Convert a value to float when possible."""
+    if value is None:
+        return None
+    try:
+        result = float(value)
+        if math.isnan(result) or math.isinf(result):
+            return None
+        return result
+    except (TypeError, ValueError):
+        return None
+
+
+def _pick_statement_row(df, candidates: List[str]):
+    """Return the first matching row from a yfinance statement DataFrame."""
+    if df is None or getattr(df, "empty", True):
+        return None
+    for key in candidates:
+        if key in df.index:
+            return df.loc[key]
+    return None
+
+
+def _annual_statement(ticker: yf.Ticker, getter_names: List[str]):
+    """Fetch annual statement data using the first available yfinance method."""
+    last_err = None
+    for name in getter_names:
+        getter = getattr(ticker, name, None)
+        if getter is None:
+            continue
+        try:
+            result = getter(freq="yearly") if callable(getter) else getter
+            if result is not None and not getattr(result, "empty", True):
+                return result
+        except Exception as exc:
+            last_err = exc
+            continue
+    if last_err:
+        raise last_err
+    return None
 
 def download_nse_tickers(force: bool = False) -> int:
     """Download all NSE ticker symbols including stocks, INVITs, and REITs.
@@ -55,7 +99,12 @@ def download_nse_tickers(force: bool = False) -> int:
             yahoo_symbol = f"{symbol}.NS"
             if yahoo_symbol not in seen_symbols:
                 name = row.get("NAME OF COMPANY")
-                db.upsert_ticker(yahoo_symbol, name=name)
+                ticker_id = db.upsert_ticker(yahoo_symbol, name=name)
+                face_value = row.get("FACE VALUE")
+                try:
+                    db.update_ticker_face_value(ticker_id, float(face_value) if face_value else None)
+                except ValueError:
+                    db.update_ticker_face_value(ticker_id, None)
                 seen_symbols.add(yahoo_symbol)
                 added += 1
     except Exception as e:
@@ -110,13 +159,13 @@ def download_nse_tickers(force: bool = False) -> int:
                 
                 # Add the base symbol (without suffix) if not already added
                 if base_symbol not in seen_symbols:
-                    db.upsert_ticker(base_symbol, name=name)
+                    ticker_id = db.upsert_ticker(base_symbol, name=name)
                     seen_symbols.add(base_symbol)
                     added += 1
                 
                 # Also add the suffixed version (might be useful for some users)
                 if symbol not in seen_symbols:
-                    db.upsert_ticker(symbol, name=name)
+                    ticker_id = db.upsert_ticker(symbol, name=name)
                     seen_symbols.add(symbol)
             
             time.sleep(0.3)  # Be nice to Yahoo
@@ -214,3 +263,148 @@ def fetch_dividends(symbol: str, fetch_price: bool = True) -> Tuple[int, int]:
             
     db.update_ticker_timestamp(ticker_id, datetime.utcnow().isoformat())
     return (new_div, new_price)
+
+
+def fetch_fundamentals(symbol: str, ticker_id: int) -> Optional[Dict[str, Any]]:
+    """Fetch fundamentals from yfinance and store them in the DB."""
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.info or {}
+
+        income_df = _annual_statement(ticker, ["get_income_stmt", "income_stmt"])
+        balance_df = _annual_statement(ticker, ["get_balance_sheet", "balance_sheet"])
+        cashflow_df = _annual_statement(ticker, ["get_cashflow", "cashflow"])
+
+        latest_col = None
+        if income_df is not None and not getattr(income_df, "empty", True):
+            latest_col = income_df.columns[0]
+
+        common_equity_row = _pick_statement_row(balance_df, ["StockholdersEquity", "CommonStockEquity", "TotalEquityGrossMinorityInterest"])
+        net_income_row = _pick_statement_row(income_df, ["NetIncome", "NetIncomeCommonStockholders", "NetIncomeIncludingNoncontrollingInterests"])
+        eps_row = _pick_statement_row(income_df, ["DilutedEPS", "BasicEPS"])
+        ebit_row = _pick_statement_row(income_df, ["EBIT"])
+        current_liab_row = _pick_statement_row(balance_df, ["CurrentLiabilities"])
+        total_assets_row = _pick_statement_row(balance_df, ["TotalAssets"])
+        dividends_paid_row = _pick_statement_row(cashflow_df, ["CashDividendsPaid", "CommonStockDividendPaid"])
+        shares_row = _pick_statement_row(balance_df, ["OrdinarySharesNumber", "ShareIssued"])
+
+        latest_net_income = _to_float(net_income_row.get(latest_col)) if net_income_row is not None and latest_col is not None else None
+        latest_equity = _to_float(common_equity_row.get(latest_col)) if common_equity_row is not None and latest_col is not None else None
+        latest_eps_stmt = _to_float(eps_row.get(latest_col)) if eps_row is not None and latest_col is not None else None
+        latest_ebit = _to_float(ebit_row.get(latest_col)) if ebit_row is not None and latest_col is not None else None
+        latest_total_assets = _to_float(total_assets_row.get(latest_col)) if total_assets_row is not None and latest_col is not None else None
+        latest_current_liab = _to_float(current_liab_row.get(latest_col)) if current_liab_row is not None and latest_col is not None else None
+        latest_dividends_paid = _to_float(dividends_paid_row.get(latest_col)) if dividends_paid_row is not None and latest_col is not None else None
+        latest_shares_outstanding = _to_float(shares_row.get(latest_col)) if shares_row is not None and latest_col is not None else None
+
+        current_price = _to_float(info.get("currentPrice") or info.get("regularMarketPrice"))
+        shares_outstanding = _to_float(info.get("sharesOutstanding")) or latest_shares_outstanding
+
+        latest_data: Dict[str, Any] = {}
+
+        payout_ratio = _to_float(info.get("payoutRatio"))
+        if payout_ratio is None and latest_net_income not in (None, 0) and latest_dividends_paid is not None and latest_net_income > 0:
+            payout_ratio = (abs(latest_dividends_paid) / latest_net_income) * 100.0
+        if payout_ratio is not None:
+            latest_data["payout_ratio"] = payout_ratio * 100.0 if payout_ratio <= 1 else payout_ratio
+
+        dividend_yield = _to_float(info.get("dividendYield"))
+        if dividend_yield is None:
+            dividend_rate = _to_float(info.get("dividendRate"))
+            if dividend_rate is not None and current_price not in (None, 0):
+                dividend_yield = (dividend_rate / current_price) * 100.0
+        if dividend_yield is not None:
+            latest_data["dividend_yield"] = dividend_yield * 100.0 if dividend_yield <= 1 else dividend_yield
+
+        pe_ratio = _to_float(info.get("trailingPE"))
+        if pe_ratio is None and current_price not in (None, 0) and latest_eps_stmt not in (None, 0):
+            pe_ratio = current_price / latest_eps_stmt
+        if pe_ratio is not None:
+            latest_data["pe_ratio"] = pe_ratio
+
+        roe = _to_float(info.get("returnOnEquity"))
+        if roe is None and latest_net_income is not None and latest_equity not in (None, 0):
+            roe = (latest_net_income / latest_equity) * 100.0
+        if roe is not None:
+            latest_data["roe"] = roe * 100.0 if roe <= 1 else roe
+
+        roce = None
+        if latest_ebit is not None and latest_total_assets is not None and latest_current_liab is not None:
+            capital_employed = latest_total_assets - latest_current_liab
+            if capital_employed not in (None, 0) and capital_employed > 0:
+                roce = (latest_ebit / capital_employed) * 100.0
+        if roce is not None:
+            latest_data["roce"] = roce
+
+        book_value = _to_float(info.get("bookValue"))
+        if book_value is None and latest_equity is not None and shares_outstanding not in (None, 0):
+            book_value = latest_equity / shares_outstanding
+        if book_value is not None:
+            latest_data["book_value"] = book_value
+
+        eps = _to_float(info.get("trailingEps"))
+        if eps is None:
+            eps = latest_eps_stmt
+        if eps is not None:
+            latest_data["eps"] = eps
+
+        market_cap = _to_float(info.get("marketCap"))
+        if market_cap is None and current_price is not None and shares_outstanding not in (None, 0):
+            market_cap = current_price * shares_outstanding
+        if market_cap is not None:
+            latest_data["market_cap_cr"] = market_cap / 10000000.0
+
+        face_value = db.get_ticker_face_value(ticker_id)
+        if face_value is not None:
+            latest_data["face_value"] = face_value
+
+        if latest_data:
+            latest_data["last_updated"] = datetime.utcnow().isoformat()
+            db.upsert_screener_latest(ticker_id, latest_data)
+
+        if income_df is not None and not getattr(income_df, "empty", True):
+            for col in income_df.columns:
+                year_val = getattr(col, "year", None)
+                fiscal_year = f"Mar {year_val}" if year_val is not None else str(col)
+
+                year_data: Dict[str, Any] = {}
+
+                if eps_row is not None:
+                    year_eps = _to_float(eps_row.get(col))
+                    if year_eps is not None:
+                        year_data["eps"] = year_eps
+
+                if net_income_row is not None:
+                    net_income = _to_float(net_income_row.get(col))
+                    if net_income is not None:
+                        year_data["net_profit"] = net_income
+
+                if net_income_row is not None and common_equity_row is not None:
+                    net_income = _to_float(net_income_row.get(col))
+                    equity = _to_float(common_equity_row.get(col))
+                    if net_income is not None and equity not in (None, 0):
+                        year_data["roe"] = (net_income / equity) * 100.0
+
+                if ebit_row is not None and total_assets_row is not None and current_liab_row is not None:
+                    ebit = _to_float(ebit_row.get(col))
+                    total_assets = _to_float(total_assets_row.get(col))
+                    current_liab = _to_float(current_liab_row.get(col))
+                    capital_employed = None
+                    if total_assets is not None and current_liab is not None:
+                        capital_employed = total_assets - current_liab
+                    if ebit is not None and capital_employed not in (None, 0):
+                        year_data["roce"] = (ebit / capital_employed) * 100.0
+
+                if dividends_paid_row is not None and net_income_row is not None:
+                    dividends_paid = _to_float(dividends_paid_row.get(col))
+                    net_income = _to_float(net_income_row.get(col))
+                    if dividends_paid is not None and net_income not in (None, 0) and net_income > 0:
+                        year_data["payout_ratio"] = (abs(dividends_paid) / net_income) * 100.0
+
+                if year_data:
+                    db.upsert_screener_yearly(ticker_id, fiscal_year, year_data)
+
+        time.sleep(0.3)
+        return latest_data if latest_data else None
+    except Exception:
+        return None

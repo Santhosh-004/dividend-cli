@@ -18,11 +18,9 @@ from datetime import datetime, timedelta
 from tqdm import tqdm
 from typing import Optional
 
-from . import db
+from . import __version__, db
 from . import fetch
 from . import utils
-
-__version__ = "1.0.1"
 
 
 @click.group()
@@ -38,7 +36,7 @@ def main():
 @click.option("--max-age", default=90, help="Maximum age of data in days before refresh.")
 @click.option("--limit", default=None, type=int, help="Limit the number of tickers to update (for testing).")
 def update(symbol, force, max_age, limit):
-    """Refresh ticker list and fetch missing dividend/price data."""
+    """Refresh ticker list and fetch missing dividend/price and fundamentals data."""
     if not symbol:
         click.echo("Updating ticker list from NSE...")
         added = fetch.download_nse_tickers()
@@ -46,8 +44,8 @@ def update(symbol, force, max_age, limit):
 
     if symbol:
         # Ensure the ticker exists in the DB first
-        db.upsert_ticker(symbol)
-        tickers = [{"symbol": symbol, "last_updated": db.get_ticker_last_updated(db.upsert_ticker(symbol))}]
+        ticker_id = db.upsert_ticker(symbol)
+        tickers = [{"id": ticker_id, "symbol": symbol, "last_updated": db.get_ticker_last_updated(ticker_id)}]
     else:
         tickers = db.get_all_tickers()
         if limit:
@@ -57,22 +55,51 @@ def update(symbol, force, max_age, limit):
     
     threshold = datetime.utcnow() - timedelta(days=max_age)
 
-    for ticker in tqdm(tickers, desc="Updating data"):
-        symbol = ticker["symbol"]
-        last_updated_str = ticker["last_updated"]
-        
-        should_update = force or not last_updated_str
-        if not should_update and last_updated_str:
-            last_updated = datetime.fromisoformat(last_updated_str)
-            if last_updated < threshold:
-                should_update = True
-        
-        if should_update:
+    def is_stale(timestamp: Optional[str]) -> bool:
+        if not timestamp:
+            return True
+        try:
+            return datetime.fromisoformat(timestamp) < threshold
+        except ValueError:
+            return True
+
+    conn = db.get_connection()
+    try:
+        cur = conn.execute("SELECT ticker_id, last_updated FROM screener_latest")
+        fundamentals_updated = {row["ticker_id"]: row["last_updated"] for row in cur.fetchall()}
+    finally:
+        conn.close()
+
+    to_update = []
+    for ticker in tickers:
+        sym = ticker["symbol"]
+        ticker_id = ticker["id"]
+        needs_yahoo = force or is_stale(ticker["last_updated"])
+        needs_fundamentals = force or is_stale(fundamentals_updated.get(ticker_id))
+        if needs_yahoo or needs_fundamentals:
+            to_update.append((sym, ticker_id, needs_yahoo, needs_fundamentals))
+
+    total_updates = len(to_update)
+    
+    if total_updates == 0:
+        click.echo("All data is up to date.")
+        return
+    
+    click.echo(f"Updating {total_updates} tickers sequentially...")
+    
+    # Process sequentially
+    with tqdm(total=total_updates, desc="Updating") as pbar:
+        for sym, ticker_id, needs_yahoo, needs_fundamentals in to_update:
             try:
-                new_div, new_price = fetch.fetch_dividends(symbol)
-                # fetch.fetch_dividends already updates the timestamp in DB
+                if needs_yahoo:
+                    fetch.fetch_dividends(sym)
+                if needs_fundamentals:
+                    fetch.fetch_fundamentals(sym, ticker_id)
             except Exception:
                 pass
+            pbar.update(1)
+    
+    click.echo("Done!")
 
 
 def get_cagr_for_years(yearly_totals: pd.Series, years: int) -> Optional[float]:
@@ -164,8 +191,13 @@ def get_yield_cagr_for_years(group: pd.DataFrame, years: int) -> Optional[float]
 @click.option("--years-stalled", type=int, help="Maximum number of years with stalled dividends.")
 @click.option("--years-reduced", type=int, help="Maximum number of years with reduced dividends.")
 @click.option("--years-stopped", type=int, help="Maximum number of years with stopped dividends.")
+@click.option("--min-payout", type=float, help="Minimum payout ratio (%).")
+@click.option("--max-payout", type=float, help="Maximum payout ratio (%).")
+@click.option("--min-roe", type=float, help="Minimum ROE (%).")
+@click.option("--min-roce", type=float, help="Minimum ROCE (%).")
+@click.option("--min-div-quality", type=float, help="Minimum dividend quality score (0-100).")
 @click.option("--condition", help="Arbitrary Python-style condition (e.g. '(years_stopped + years_stalled) * 2 <= years_up')")
-def filter(symbol, min_yield, max_yield, div_growth_min, div_3yr_min, div_5yr_min, div_10yr_min, years_up, years_stalled, years_reduced, years_stopped, condition):
+def filter(symbol, min_yield, max_yield, div_growth_min, div_3yr_min, div_5yr_min, div_10yr_min, years_up, years_stalled, years_reduced, years_stopped, min_payout, max_payout, min_roe, min_roce, min_div_quality, condition):
     """Filter stocks based on dividend criteria."""
     # We'll fetch all dividends and group them in Python for complex CAGR/Year logic
     # though simple filters could be done in SQL.
@@ -193,6 +225,16 @@ def filter(symbol, min_yield, max_yield, div_growth_min, div_3yr_min, div_5yr_mi
         if tid not in splits_by_ticker:
             splits_by_ticker[tid] = []
         splits_by_ticker[tid].append(dict(s))
+    
+    # Fetch screener data for all tickers
+    screener_data = {}
+    conn = db.get_connection()
+    try:
+        cur = conn.execute("SELECT * FROM screener_latest")
+        for row in cur.fetchall():
+            screener_data[row['ticker_id']] = dict(row)
+    finally:
+        conn.close()
 
     # Process results into a DataFrame
     df_raw = [dict(r) for r in rows]
@@ -221,6 +263,9 @@ def filter(symbol, min_yield, max_yield, div_growth_min, div_3yr_min, div_5yr_mi
     for sym, group in df.groupby('symbol'):
         ticker_id = group['ticker_id'].iloc[0]
         curr_price = group['current_price'].iloc[0] if 'current_price' in group.columns else None
+        
+        # Get screener data for this ticker
+        screener = screener_data.get(ticker_id, {})
 
         # Calculate final share count based on ALL splits in DB (even after last dividend)
         all_splits = splits_by_ticker.get(ticker_id, [])
@@ -246,6 +291,20 @@ def filter(symbol, min_yield, max_yield, div_growth_min, div_3yr_min, div_5yr_mi
         if min_yield is not None and last_yield < min_yield:
             continue
         if max_yield is not None and last_yield > max_yield:
+            continue
+        
+        # Filter by screener data
+        payout = screener.get('payout_ratio')
+        roe = screener.get('roe')
+        roce = screener.get('roce')
+        
+        if min_payout is not None and (payout is None or payout < min_payout):
+            continue
+        if max_payout is not None and (payout is None or payout > max_payout):
+            continue
+        if min_roe is not None and (roe is None or roe < min_roe):
+            continue
+        if min_roce is not None and (roce is None or roce < min_roce):
             continue
             
         # Yearly totals for CAGR and classifications - exclude current year
@@ -279,7 +338,7 @@ def filter(symbol, min_yield, max_yield, div_growth_min, div_3yr_min, div_5yr_mi
         # CAGRs - use get_cagr_for_years for consistency with stats
         cagr_overall = get_cagr_for_years(yearly_totals, yearly_totals.index[-1] - yearly_totals.index[0]) if len(yearly_totals) >= 2 else 0
         
-        # Calculate Standard Deviation and Coefficient of Variation for dividend stability
+        # Legacy dispersion metrics kept for backward compatibility in conditions
         if len(yearly_totals) >= 2:
             div_mean = yearly_totals.mean()
             div_std = yearly_totals.std()
@@ -306,6 +365,13 @@ def filter(symbol, min_yield, max_yield, div_growth_min, div_3yr_min, div_5yr_mi
         if div_10yr_min is not None and (c10 is None or c10 < div_10yr_min):
             continue
 
+        quality = utils.dividend_quality_score(yearly_totals_list, cagr_overall)
+        dq_score = quality["score"] if quality else None
+        dq_rating = quality["rating"] if quality else None
+
+        if min_div_quality is not None and (dq_score is None or dq_score < min_div_quality):
+            continue
+
         # Evaluate arbitrary condition if provided
         if eval_condition:
             eval_vars = {
@@ -326,7 +392,14 @@ def filter(symbol, min_yield, max_yield, div_growth_min, div_3yr_min, div_5yr_mi
                 'shares': final_shares,
                 'div_mean': float(div_mean) if div_std is not None else 0,
                 'div_std': float(div_std) if div_std is not None else 0,
-                'div_cv': float(div_cv) if div_cv is not None else 0
+                'div_cv': float(div_cv) if div_cv is not None else 0,
+                'dq_score': float(dq_score) if dq_score is not None else 0,
+                'dividend_quality_score': float(dq_score) if dq_score is not None else 0,
+                'dq_rating': dq_rating or '',
+                'dividend_quality_rating': dq_rating or '',
+                'payout': payout or 0,
+                'roe': roe or 0,
+                'roce': roce or 0,
             }
             try:
                 if not eval(eval_condition, {"__builtins__": {}}, eval_vars):
@@ -340,21 +413,26 @@ def filter(symbol, min_yield, max_yield, div_growth_min, div_3yr_min, div_5yr_mi
             "Price": round(curr_price, 2) if curr_price is not None else "N/A",
             "Shares": round(final_shares, 2),
             "Yield (%)": round(last_yield, 2),
+            "Payout %": round(payout, 1) if payout is not None else "N/A",
+            "ROE %": round(roe, 1) if roe is not None else "N/A",
+            "ROCE %": round(roce, 1) if roce is not None else "N/A",
+            "Div Quality": round(float(dq_score), 2) if dq_score is not None else "N/A",
+            "Quality Band": dq_rating or "N/A",
             "Div Mean": round(float(div_mean), 2) if div_std is not None else "N/A",
-            "Div StdDev":round(float(div_std), 2) if div_std is not None else "N/A",
-            "Div CV (%)": round(float(div_cv), 2) if div_cv is not None else "N/A",
+            "Div StdDev": round(float(div_std), 2) if div_std is not None else "N/A",
+            "CV (%)": round(float(div_cv), 2) if div_cv is not None else "N/A",
             "Yrs Up": up,
             "Yrs Stalled": stalled,
             "Yrs Reduced": reduced,
             "Yrs Stopped": stopped,
-            "Div Growth Overall (%)": round(cagr_overall, 2),
+            "Div Overall (%)": round(cagr_overall, 2),
             "Div 3Yr (%)": round(c3, 2) if c3 is not None else "N/A",
             "Div 5Yr (%)": round(c5, 2) if c5 is not None else "N/A",
             "Div 10Yr (%)": round(c10, 2) if c10 is not None else "N/A",
             "Div 15Yr (%)": round(c15, 2) if c15 is not None else "N/A",
             "Div 20Yr (%)": round(c20, 2) if c20 is not None else "N/A",
             "Div 25Yr (%)": round(c25, 2) if c25 is not None else "N/A",
-            "Div 30Yr (%)": round(c30, 2) if c30 is not None else "N/A"
+            "Div 30Yr (%)": round(c30, 2) if c30 is not None else "N/A",
         }
         results.append(res)
         
@@ -384,11 +462,14 @@ def filter(symbol, min_yield, max_yield, div_growth_min, div_3yr_min, div_5yr_mi
         click.echo("  Price            : Current market price (raw)")
         click.echo("  Shares           : How many shares 1 original share has become via splits")
         click.echo("  Yield (%)        : Last year's total dividend / price on last dividend date * 100")
+        click.echo("  Div Quality      : 0-100 score for stable and growing dividend history")
+        click.echo("                     Rewards years-up, growth, smooth trend; penalizes cuts/stops")
+        click.echo("  Quality Band     : Elite / Strong / Developing / Fragile")
         click.echo("  Div Mean         : Mean (average) of yearly dividend totals")
         click.echo("  Div StdDev       : Standard deviation of yearly dividend totals (volatility)")
+        click.echo("                     Legacy diagnostic only, not the main quality metric")
         click.echo("  Div CV (%)       : Coefficient of Variation = StdDev/Mean*100")
-        click.echo("                     Lower CV = more stable/predictable dividends")
-        click.echo("                     CV <20% = very stable, 20-50% = moderate, >50% = volatile")
+        click.echo("                     Legacy dispersion metric; can misclassify strong growers")
         click.echo("  Yrs Up           : Years where total payout was GREATER than prev year")
         click.echo("  Yrs Stalled      : Years where total payout was EQUAL to prev year")
         click.echo("  Yrs Reduced      : Years where total payout was LOWER than prev year")
@@ -469,29 +550,33 @@ def stats(symbol):
         ("30 Year", get_cagr_for_years(yearly_forward_complete, 30)),
     ]
     click.echo(tabulate([(n, f"{v:.2f}%" if v else "N/A") for n, v in cagrs], headers=["Period", "CAGR"], tablefmt="simple"))
+
+    full_year_range = None
+    if len(yearly_forward_complete) > 0:
+        min_year = yearly_forward_complete.index.min()
+        max_year = yearly_forward_complete.index.max()
+        full_year_range = pd.Series(0.0, index=range(min_year, max_year + 1))
+        full_year_range.update(yearly_forward_complete.astype(float))
     
-    # Dividend stability metrics (volatility)
     if len(yearly_forward_complete) >= 2:
         div_mean = yearly_forward_complete.mean()
         div_std = yearly_forward_complete.std()
         div_cv = (div_std / div_mean * 100) if div_mean > 0 else None
-        
-        click.echo(f"\nDividend Stability (Volatility Analysis):")
-        click.echo(f"Mean Yearly Dividend:₹{div_mean:.2f}")
+        quality = utils.dividend_quality_score(full_year_range.tolist() if full_year_range is not None else [], cagrs[0][1])
+
+        click.echo(f"\nDividend Quality:")
+        if quality is not None:
+            click.echo(f"Quality Score:        {quality['score']:.2f}/100")
+            click.echo(f"Quality Rating:       {quality['rating']}")
+            click.echo(f"Consistency Score:    {quality['consistency_score']:.2f}")
+            click.echo(f"Growth Score:         {quality['growth_score']:.2f}")
+            click.echo(f"Trend Score:          {quality['trend_score']:.2f}")
+            click.echo(f"History Score:        {quality['history_score']:.2f}")
+        click.echo(f"Mean Yearly Dividend: ₹{div_mean:.2f}")
         click.echo(f"Std Deviation:        ₹{div_std:.2f}")
-        if div_cv is not None:
-            click.echo(f"Coefficient of Var:   {div_cv:.2f}%")
-            if div_cv < 20:
-                stability = "VeryStable"
-            elif div_cv < 50:
-                stability = "Moderate"
-            else:
-                stability = "Volatile"
-            click.echo(f"Stability Rating:     {stability}")
-        else:
-            click.echo("Coefficient of Var:   N/A")
+        click.echo(f"CV (Legacy):          {div_cv:.2f}%" if div_cv is not None else "CV (Legacy):          N/A")
     else:
-        click.echo("\nDividend Stability: Not enough data (need ≥2 years)")
+        click.echo("\nDividend Quality: Not enough data (need >=2 years)")
     
     click.echo(f"\nYield CAGR (Dividend/Price Growth, excluding {current_year}):")
     yield_cagrs = [
@@ -504,11 +589,7 @@ def stats(symbol):
     click.echo(tabulate([(n, f"{v:.2f}%" if v else "N/A") for n, v in yield_cagrs], headers=["Period", "Yield CAGR"], tablefmt="simple"))
     
     # Yearly changes classification - fill missing years with 0 for accurate counts
-    min_year = yearly_forward_complete.index.min()
-    max_year = yearly_forward_complete.index.max()
-    full_year_range = pd.Series(0.0, index=range(min_year, max_year + 1))
-    full_year_range.update(yearly_forward_complete.astype(float))
-    yearly_forward_complete_list = full_year_range.tolist()
+    yearly_forward_complete_list = full_year_range.tolist() if full_year_range is not None else []
     up, stalled, reduced, stopped = utils.classify_years(yearly_forward_complete_list)
     click.echo("\nYear-over-Year Summary:")
     click.echo(f"Years Up:      {up}")
@@ -524,6 +605,118 @@ def stats(symbol):
     recent = recent[['ex_date', 'raw', 'forward', 'shares']]
     click.echo(tabulate(recent, 
                         headers=['Ex‑Date', 'Raw', 'Forward', 'Shares'], tablefmt='simple'))
+    
+    # Show fundamentals data if available
+    screener_latest = db.get_screener_latest_by_symbol(symbol)
+    screener_yearly = db.get_screener_yearly_by_symbol(symbol)
+    
+    if screener_latest or screener_yearly:
+        click.echo("\n" + "="*60)
+        click.echo("FUNDAMENTALS DATA")
+        click.echo("="*60)
+        
+        if screener_latest:
+            click.echo("\nLatest Snapshot:")
+            latest_dict = dict(screener_latest)
+            for key, value in latest_dict.items():
+                if key not in ['ticker_id', 'symbol', 'last_updated'] and value is not None:
+                    click.echo(f"  {key}: {value}")
+        
+        if screener_yearly:
+            click.echo("\nYearly Payout Ratios:")
+            yearly_payout = []
+            for row in screener_yearly:
+                row_dict = dict(row)
+                yearly_payout.append({
+                    'Year': row_dict.get('fiscal_year', ''),
+                    'Payout %': row_dict.get('payout_ratio', 'N/A'),
+                    'EPS': row_dict.get('eps', 'N/A'),
+                    'Net Profit': row_dict.get('net_profit', 'N/A'),
+                    'ROE %': row_dict.get('roe', 'N/A'),
+                })
+            click.echo(tabulate(yearly_payout, headers="keys", tablefmt="simple"))
+    
+    click.echo("")
+
+
+@main.command()
+@click.argument("symbol")
+def screener(symbol):
+    """Show fundamentals data for a ticker."""
+    ticker_id = db.upsert_ticker(symbol)
+    
+    # Get latest data
+    latest = db.get_screener_latest_by_symbol(symbol)
+    
+    if not latest:
+        click.echo(f"No fundamentals data found for {symbol}.")
+        click.echo("Run 'update --symbol {symbol}' to fetch data.")
+        return
+    
+    click.echo(f"--- {symbol} Fundamentals Data ---")
+    click.echo("\nLatest Snapshot:")
+    
+    latest_dict = dict(latest)
+    for key, value in latest_dict.items():
+        if key not in ['ticker_id', 'symbol'] and value is not None:
+            click.echo(f"  {key}: {value}")
+    
+    # Get yearly data
+    yearly = db.get_screener_yearly_by_symbol(symbol)
+    
+    if yearly:
+        click.echo("\nYearly Data:")
+        yearly_data = []
+        for row in yearly:
+            row_dict = dict(row)
+            yearly_data.append({
+                'Year': row_dict.get('fiscal_year', ''),
+                'Payout %': row_dict.get('payout_ratio', 'N/A'),
+                'EPS': row_dict.get('eps', 'N/A'),
+                'Net Profit': row_dict.get('net_profit', 'N/A'),
+                'ROE %': row_dict.get('roe', 'N/A'),
+            })
+        
+        click.echo(tabulate(yearly_data, headers="keys", tablefmt="simple"))
+    else:
+        click.echo("\nNo yearly data available.")
+
+
+@main.command()
+@click.option("--host", default="127.0.0.1", show_default=True, help="Host to bind the server to.")
+@click.option("--port", default=7788, show_default=True, help="Port to listen on.")
+@click.option(
+    "--open/--no-open",
+    "open_browser",
+    default=True,
+    show_default=True,
+    help="Open the browser automatically when the server starts.",
+)
+def serve(host, port, open_browser):
+    """Start the Dividend CLI web UI server."""
+    try:
+        import uvicorn
+    except ImportError:
+        click.echo("uvicorn is required to run the web server. Install it with:")
+        click.echo("  pip install uvicorn[standard]")
+        raise SystemExit(1)
+
+    url = f"http://{host}:{port}"
+    click.echo(f"Starting Dividend CLI web UI at {url}")
+    click.echo("Press Ctrl+C to stop.")
+
+    if open_browser:
+        import threading
+        import webbrowser
+        threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+
+    uvicorn.run(
+        "dividend_calculator.server:app",
+        host=host,
+        port=port,
+        reload=False,
+    )
+
 
 if __name__ == "__main__":
     main()

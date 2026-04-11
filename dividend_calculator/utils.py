@@ -1,13 +1,15 @@
 """Utility functions for dividend calculations.
 
 Provides:
-* dividend_yield – compute yield given amount and price.
-* cagr – compound annual growth rate for dividend totals.
-* classify_years – given a list of yearly totals, return counts of
+* dividend_yield - compute yield given amount and price.
+* cagr - compound annual growth rate for dividend totals.
+* classify_years - given a list of yearly totals, return counts of
   (up, stalled, reduced, stopped).
+* dividend_quality_score - score how stable and growing a dividend history is.
 """
 
-from typing import Sequence, Tuple, List
+import math
+from typing import Sequence, Tuple, List, Optional, Dict
 
 
 def dividend_yield(amount: float, price: float) -> float:
@@ -53,6 +55,119 @@ def classify_years(yearly_totals: Sequence[float]) -> Tuple[int, int, int, int]:
         else:
             reduced += 1
     return up, stalled, reduced, stopped
+
+
+def _clamp(value: float, lower: float = 0.0, upper: float = 100.0) -> float:
+    """Clamp a number into a closed interval."""
+    return max(lower, min(upper, value))
+
+
+def _growth_score(cagr_value: Optional[float]) -> float:
+    """Map dividend CAGR to a bounded 0-100 growth score.
+
+    The mapping intentionally saturates at high growth rates so that the metric
+    rewards durable growth without letting outliers dominate the final score.
+    """
+    if cagr_value is None:
+        return 0.0
+    if cagr_value <= 0:
+        return _clamp(35.0 + (cagr_value * 3.5))
+    if cagr_value <= 10:
+        return _clamp(35.0 + (cagr_value * 4.0))
+    return _clamp(75.0 + ((cagr_value - 10.0) * 2.5))
+
+
+def _log_trend_quality(values: Sequence[float]) -> float:
+    """Return a 0-100 score for how smoothly dividends trend upward.
+
+    Uses a linear fit on log dividends so compounding-like histories score well,
+    while flat or erratic histories score lower. This avoids the CV problem where
+    good step-up dividend histories look artificially "volatile".
+    """
+    positive_values = [float(v) for v in values if float(v) > 1e-6]
+    if len(positive_values) < 3:
+        return 0.0
+
+    x_vals = list(range(len(positive_values)))
+    y_vals = [math.log(v) for v in positive_values]
+    x_mean = sum(x_vals) / len(x_vals)
+    y_mean = sum(y_vals) / len(y_vals)
+
+    ss_xx = sum((x - x_mean) ** 2 for x in x_vals)
+    if ss_xx <= 1e-12:
+        return 0.0
+
+    slope = sum((x - x_mean) * (y - y_mean) for x, y in zip(x_vals, y_vals)) / ss_xx
+    intercept = y_mean - (slope * x_mean)
+
+    ss_tot = sum((y - y_mean) ** 2 for y in y_vals)
+    if ss_tot <= 1e-12:
+        r_squared = 1.0
+    else:
+        ss_res = sum((y - ((slope * x) + intercept)) ** 2 for x, y in zip(x_vals, y_vals))
+        r_squared = 1.0 - (ss_res / ss_tot)
+
+    r_squared = max(0.0, min(1.0, r_squared))
+    implied_growth = ((math.exp(slope) - 1.0) * 100.0) if slope > -20 else -100.0
+    return _clamp(r_squared * _growth_score(implied_growth))
+
+
+def dividend_quality_score(
+    yearly_totals: Sequence[float],
+    overall_cagr: Optional[float] = None,
+) -> Optional[Dict[str, float | int | str]]:
+    """Score a stock's dividend history for stable and growing payouts.
+
+    The old CV-based approach measured dispersion, which punishes exactly the
+    kind of long upward stair-step histories we want to reward. This score is
+    designed for dividend quality instead:
+
+    * Consistency: rewards years up, tolerates some flat years,
+      penalizes cuts and stoppages heavily.
+    * Growth: rewards positive long-term CAGR, but with capped influence.
+    * Trend quality: rewards histories that follow a smooth upward trajectory.
+    * History depth: gives a small boost to longer proven records.
+    """
+    values = [float(v) for v in yearly_totals]
+    if len(values) < 2:
+        return None
+
+    transitions = len(values) - 1
+    positive_years = sum(1 for v in values if v > 1e-6)
+    up, stalled, reduced, stopped = classify_years(values)
+
+    consistency_score = _clamp(
+        ((up + (0.6 * stalled) - (1.0 * reduced) - (1.4 * stopped)) / transitions) * 100.0
+    )
+    growth_score = _growth_score(overall_cagr)
+    trend_score = _log_trend_quality(values)
+    history_score = _clamp((positive_years / 10.0) * 100.0)
+
+    total_score = _clamp(
+        (0.45 * consistency_score)
+        + (0.25 * growth_score)
+        + (0.20 * trend_score)
+        + (0.10 * history_score)
+    )
+
+    if total_score >= 85:
+        rating = "Elite"
+    elif total_score >= 70:
+        rating = "Strong"
+    elif total_score >= 55:
+        rating = "Developing"
+    else:
+        rating = "Fragile"
+
+    return {
+        "score": round(total_score, 2),
+        "rating": rating,
+        "consistency_score": round(consistency_score, 2),
+        "growth_score": round(growth_score, 2),
+        "trend_score": round(trend_score, 2),
+        "history_score": round(history_score, 2),
+        "years_analyzed": len(values),
+    }
 
 
 def adjust_dividends(dividends: List[dict], splits: List[dict]) -> List[dict]:

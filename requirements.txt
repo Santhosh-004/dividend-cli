@@ -4,3 +4,5 @@ click
 tabulate
 tqdm
 requests
+fastapi
+uvicorn[standard]

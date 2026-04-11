@@ -29,5 +29,17 @@ class TestUtils(unittest.TestCase):
         self.assertEqual(reduced, 1)
         self.assertEqual(stopped, 1)
 
+    def test_dividend_quality_rewards_consistent_growth(self):
+        strong = utils.dividend_quality_score([1.0, 1.3, 1.6, 2.0, 2.5, 3.1], 25.0)
+        self.assertIsNotNone(strong)
+        self.assertGreaterEqual(strong["score"], 80)
+        self.assertIn(strong["rating"], ["Strong", "Elite"])
+
+    def test_dividend_quality_penalizes_stops_and_cuts(self):
+        fragile = utils.dividend_quality_score([2.0, 2.1, 0.0, 1.2, 0.8, 0.0], -5.0)
+        self.assertIsNotNone(fragile)
+        self.assertLess(fragile["score"], 55)
+        self.assertEqual(fragile["rating"], "Fragile")
+
 if __name__ == "__main__":
     unittest.main()

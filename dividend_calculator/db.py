@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS tickers (
     name TEXT,
     sector TEXT,
     market_cap REAL,
+    face_value REAL,
     current_price REAL,
     last_updated DATE
 );
@@ -63,6 +64,41 @@ CREATE TABLE IF NOT EXISTS splits (
     UNIQUE(ticker_id, ex_date),
     FOREIGN KEY(ticker_id) REFERENCES tickers(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS screener_yearly (
+    id INTEGER PRIMARY KEY,
+    ticker_id INTEGER NOT NULL,
+    fiscal_year TEXT NOT NULL,
+    payout_ratio REAL,
+    eps REAL,
+    net_profit REAL,
+    revenue REAL,
+    roe REAL,
+    roce REAL,
+    div_yield REAL,
+    book_value REAL,
+    debt_to_equity REAL,
+    UNIQUE(ticker_id, fiscal_year),
+    FOREIGN KEY(ticker_id) REFERENCES tickers(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS screener_latest (
+    ticker_id INTEGER PRIMARY KEY,
+    payout_ratio REAL,
+    dividend_yield REAL,
+    pe_ratio REAL,
+    roe REAL,
+    roce REAL,
+    book_value REAL,
+    face_value REAL,
+    market_cap_cr REAL,
+    eps REAL,
+    revenue_growth REAL,
+    profit_growth REAL,
+    debt_to_equity REAL,
+    last_updated DATE,
+    FOREIGN KEY(ticker_id) REFERENCES tickers(id) ON DELETE CASCADE
+);
 """
 
 
@@ -85,6 +121,10 @@ def init_db() -> None:
         # Add current_price if it doesn't exist (for existing DBs)
         try:
             conn.execute("ALTER TABLE tickers ADD COLUMN current_price REAL")
+        except sqlite3.OperationalError:
+            pass # Already exists
+        try:
+            conn.execute("ALTER TABLE tickers ADD COLUMN face_value REAL")
         except sqlite3.OperationalError:
             pass # Already exists
         conn.commit()
@@ -111,6 +151,30 @@ def upsert_ticker(symbol: str, name: Optional[str] = None,
         row = cur.fetchone()
         conn.commit()
         return row["id"]
+    finally:
+        conn.close()
+
+
+def update_ticker_face_value(ticker_id: int, face_value: Optional[float]) -> None:
+    """Set the face_value column for a ticker."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE tickers SET face_value = ? WHERE id = ?",
+            (face_value, ticker_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_ticker_face_value(ticker_id: int) -> Optional[float]:
+    """Return the face value for a ticker."""
+    conn = get_connection()
+    try:
+        cur = conn.execute("SELECT face_value FROM tickers WHERE id = ?", (ticker_id,))
+        row = cur.fetchone()
+        return row["face_value"] if row else None
     finally:
         conn.close()
 
@@ -247,6 +311,122 @@ def get_all_tickers() -> List[sqlite3.Row]:
         return list(cur.fetchall())
     finally:
         conn.close()
+
+
+def upsert_screener_yearly(ticker_id: int, fiscal_year: str, data: Dict[str, Any]) -> None:
+    """Insert or update yearly screener.in data for a ticker."""
+    conn = get_connection()
+    try:
+        # Check if record exists
+        cur = conn.execute(
+            "SELECT id FROM screener_yearly WHERE ticker_id = ? AND fiscal_year = ?",
+            (ticker_id, fiscal_year)
+        )
+        exists = cur.fetchone()
+        
+        if exists:
+            # Update existing record
+            set_clause = ", ".join([f"{k} = ?" for k in data.keys()])
+            values = list(data.values()) + [ticker_id, fiscal_year]
+            conn.execute(
+                f"UPDATE screener_yearly SET {set_clause} WHERE ticker_id = ? AND fiscal_year = ?",
+                values
+            )
+        else:
+            # Insert new record
+            columns = ", ".join(["ticker_id", "fiscal_year"] + list(data.keys()))
+            placeholders = ", ".join(["?"] * (len(data) + 2))
+            values = [ticker_id, fiscal_year] + list(data.values())
+            conn.execute(
+                f"INSERT INTO screener_yearly ({columns}) VALUES ({placeholders})",
+                values
+            )
+        
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_screener_yearly(ticker_id: int) -> List[sqlite3.Row]:
+    """Get all yearly screener.in data for a ticker."""
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "SELECT * FROM screener_yearly WHERE ticker_id = ? ORDER BY fiscal_year",
+            (ticker_id,)
+        )
+        return list(cur.fetchall())
+    finally:
+        conn.close()
+
+
+def get_screener_yearly_by_symbol(symbol: str) -> List[sqlite3.Row]:
+    """Get all yearly screener.in data for a ticker by symbol."""
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "SELECT sy.*, t.symbol FROM screener_yearly sy "
+            "JOIN tickers t ON sy.ticker_id = t.id "
+            "WHERE t.symbol = ? ORDER BY sy.fiscal_year",
+            (symbol,)
+        )
+        return list(cur.fetchall())
+    finally:
+        conn.close()
+
+
+def upsert_screener_latest(ticker_id: int, data: Dict[str, Any]) -> None:
+    """Insert or update latest screener.in data for a ticker."""
+    conn = get_connection()
+    try:
+        # Check if record exists
+        cur = conn.execute("SELECT ticker_id FROM screener_latest WHERE ticker_id = ?", (ticker_id,))
+        exists = cur.fetchone()
+        
+        if exists:
+            # Update existing record
+            set_clause = ", ".join([f"{k} = ?" for k in data.keys()])
+            values = list(data.values()) + [ticker_id]
+            conn.execute(f"UPDATE screener_latest SET {set_clause} WHERE ticker_id = ?", values)
+        else:
+            # Insert new record
+            columns = ", ".join(["ticker_id"] + list(data.keys()))
+            placeholders = ", ".join(["?"] * (len(data) + 1))
+            values = [ticker_id] + list(data.values())
+            conn.execute(f"INSERT INTO screener_latest ({columns}) VALUES ({placeholders})", values)
+        
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_screener_latest(ticker_id: int) -> Optional[sqlite3.Row]:
+    """Get latest screener.in data for a ticker."""
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "SELECT * FROM screener_latest WHERE ticker_id = ?",
+            (ticker_id,)
+        )
+        return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def get_screener_latest_by_symbol(symbol: str) -> Optional[sqlite3.Row]:
+    """Get latest screener.in data for a ticker by symbol."""
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "SELECT sl.*, t.symbol FROM screener_latest sl "
+            "JOIN tickers t ON sl.ticker_id = t.id "
+            "WHERE t.symbol = ?",
+            (symbol,)
+        )
+        return cur.fetchone()
+    finally:
+        conn.close()
+
 
 # Ensure the DB is initialised on import
 init_db()
