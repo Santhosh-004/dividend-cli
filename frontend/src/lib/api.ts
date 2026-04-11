@@ -10,7 +10,7 @@ import type {
 	TopStocksResponse,
 	UpdateRequest,
 } from './types';
-import { cacheGet, cacheSet } from './cache';
+import { cacheClear, cacheGet, cacheSet } from './cache';
 
 const BASE = '/api';
 
@@ -56,6 +56,8 @@ async function cached<T>(key: string, ttl: number, fn: () => Promise<T>): Promis
 }
 
 export const api = {
+	clearCache: () => cacheClear(),
+
 	getSummary: () =>
 		cached<DBSummary>('summary', 60_000, () => get('/summary')),
 

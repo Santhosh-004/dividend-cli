@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { ArrowRight, ArrowUpRight, TrendingUp, Database, BarChart3, ShieldCheck } from 'lucide-svelte';
+	import { ArrowRight, ArrowUpRight, TrendingUp, Database, BarChart3, ShieldCheck, X } from 'lucide-svelte';
 	import { api } from '$lib/api';
 	import type { DBSummary, TopStocksResponse } from '$lib/types';
 	import { fmt, fmtPct, relativeTime, dividendQualityLabel, dividendQualityBadgeClass } from '$lib/utils';
@@ -10,6 +10,14 @@
 	let topStocks = $state<TopStocksResponse | null>(null);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let dismissNoDataModal = $state(false);
+
+	const showNoDataModal = $derived(
+		!loading &&
+			!error &&
+			!dismissNoDataModal &&
+			(summary?.tickers_with_dividends ?? 0) === 0,
+	);
 
 	onMount(async () => {
 		try {
@@ -67,6 +75,56 @@
 	</div>
 {:else}
 	<div class="animate-enter">
+		{#if showNoDataModal}
+			<div class="fixed inset-0 z-[90] flex items-center justify-center px-4">
+				<div class="absolute inset-0 bg-ink-950/82 backdrop-blur-sm animate-fade-in"></div>
+				<div class="surface-raised relative z-10 w-full max-w-xl p-6 sm:p-7 animate-enter-scale">
+					<button
+						type="button"
+						onclick={() => (dismissNoDataModal = true)}
+						class="absolute right-4 top-4 rounded-md p-1.5 text-ink-500 transition-colors hover:bg-ink-800/60 hover:text-cream-200"
+						aria-label="Dismiss setup message"
+					>
+						<X class="h-4 w-4" />
+					</button>
+
+					<div class="editorial-rule pr-8">
+						<p class="label text-coral-400">First run</p>
+						<h2 class="mt-3 heading-serif text-3xl text-cream-50">Load data before using the dashboard</h2>
+						<p class="mt-3 max-w-lg text-sm leading-relaxed text-ink-400">
+							This install starts with an empty database. Run your first update to download tickers,
+							dividend history, and fundamentals before screening or comparing stocks.
+						</p>
+					</div>
+
+					<div class="mt-5 grid gap-3 sm:grid-cols-3 text-xs text-ink-400 stagger">
+						<div class="surface p-3.5">
+							<p class="label">1</p>
+							<p class="mt-1 text-cream-200">Open Update</p>
+						</div>
+						<div class="surface p-3.5">
+							<p class="label">2</p>
+							<p class="mt-1 text-cream-200">Run Quick or Full Update</p>
+						</div>
+						<div class="surface p-3.5">
+							<p class="label">3</p>
+							<p class="mt-1 text-cream-200">Come back to explore results</p>
+						</div>
+					</div>
+
+					<div class="mt-6 flex flex-wrap gap-3">
+						<button type="button" class="btn-coral" onclick={() => goto('/update')}>
+							Run first update
+							<ArrowRight class="h-4 w-4" />
+						</button>
+						<button type="button" class="btn-outline" onclick={() => (dismissNoDataModal = true)}>
+							Dismiss
+						</button>
+					</div>
+				</div>
+			</div>
+		{/if}
+
 		<!-- Editorial hero -->
 		<div class="mb-10">
 			<div class="flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">

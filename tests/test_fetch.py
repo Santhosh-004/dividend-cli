@@ -38,26 +38,36 @@ class FakeTicker:
 
 class TestFetch(unittest.TestCase):
     @patch("dividend_calculator.fetch.time.sleep", return_value=None)
+    @patch("dividend_calculator.fetch._yahoo_symbol_supported", return_value=False)
     @patch("dividend_calculator.fetch.requests.get")
     @patch("dividend_calculator.fetch.db.update_ticker_face_value")
-    @patch("dividend_calculator.fetch.db.upsert_ticker", side_effect=[1, 2, 3])
+    @patch("dividend_calculator.fetch.db.get_all_tickers", return_value=[])
+    @patch("dividend_calculator.fetch.db.upsert_ticker", side_effect=[1, 2])
     def test_download_nse_tickers_stores_face_value(
         self,
         upsert_ticker,
+        get_all_tickers,
         update_face_value,
         mock_get,
+        yahoo_supported,
         _sleep,
     ):
-        csv_text = (
+        main_csv_text = (
             "SYMBOL,NAME OF COMPANY,SERIES,DATE OF LISTING,PAID UP VALUE,MARKET LOT,ISIN NUMBER,FACE VALUE\n"
             "ABC,ABC Ltd,EQ,01-JAN-2020,10,1,INE000000000,10\n"
             "XYZ,XYZ Ltd,BE,01-JAN-2020,5,1,INE000000001,5\n"
         )
+        empty_note_csv = (
+            "SYMBOL,NAME OF COMPANY,SERIES,DATE OF LISTING,PAID UP VALUE,MARKET LOT,ISIN NUMBER,FACE VALUE\n"
+            "Note: sample,,,,,,\n"
+        )
 
         def side_effect(url, *args, **kwargs):
             if url == fetch.NSE_CSV_URL:
-                return FakeResponse(content=csv_text.encode("utf-8"))
-            return FakeResponse(json_data={"quotes": []})
+                return FakeResponse(content=main_csv_text.encode("utf-8"))
+            if url in (fetch.NSE_INVIT_CSV_URL, fetch.NSE_REIT_CSV_URL, fetch.NSE_SME_CSV_URL):
+                return FakeResponse(content=empty_note_csv.encode("utf-8"))
+            return FakeResponse(json_data={})
 
         mock_get.side_effect = side_effect
 
@@ -68,6 +78,69 @@ class TestFetch(unittest.TestCase):
         self.assertEqual(upsert_ticker.call_args_list[1].args[0], "XYZ.NS")
         self.assertEqual(update_face_value.call_args_list[0].args, (1, 10.0))
         self.assertEqual(update_face_value.call_args_list[1].args, (2, 5.0))
+
+    @patch("dividend_calculator.fetch.time.sleep", return_value=None)
+    @patch("dividend_calculator.fetch._yahoo_symbol_supported")
+    @patch("dividend_calculator.fetch.requests.get")
+    @patch("dividend_calculator.fetch.db.update_ticker_face_value")
+    @patch("dividend_calculator.fetch.db.get_all_tickers", return_value=[])
+    @patch("dividend_calculator.fetch.db.upsert_ticker", side_effect=[1, 2, 3, 4])
+    def test_download_nse_tickers_adds_validated_sme_and_reit_invit_rows(
+        self,
+        upsert_ticker,
+        _get_all_tickers,
+        update_face_value,
+        mock_get,
+        yahoo_supported,
+        _sleep,
+    ):
+        main_csv_text = (
+            "SYMBOL,NAME OF COMPANY,SERIES,DATE OF LISTING,PAID UP VALUE,MARKET LOT,ISIN NUMBER,FACE VALUE\n"
+            "ABC,ABC Ltd,EQ,01-JAN-2020,10,1,INE000000000,10\n"
+        )
+        sme_csv_text = (
+            "SYMBOL,NAME_OF_COMPANY,SERIES,DATE_OF_LISTING,PAID_UP_VALUE,ISIN_NUMBER,FACE_VALUE\n"
+            "SME1,SME One Limited,SM,01-Jan-2024,10,INE000000010,10\n"
+            "SME2-RE,SME Rights Entitlement,ST,02-Jan-2024,10,INE000000011,10\n"
+            "SME3,SME Three Limited,SM,03-Jan-2024,10,INE000000012,10\n"
+        )
+        invit_csv_text = (
+            "SYMBOL,NAME OF COMPANY,SERIES,DATE OF LISTING,PAID UP VALUE,MARKET LOT,ISIN NUMBER,FACE VALUE\n"
+            "INDIGRID,India Grid Trust,IV,06-Jun-17,100,5103,INE219X23014,100\n"
+        )
+        reit_csv_text = (
+            "SYMBOL,NAME OF COMPANY,SERIES,DATE OF LISTING,PAID UP VALUE,MARKET LOT,ISIN NUMBER,FACE VALUE\n"
+            "EMBASSY,Embassy Office Parks REIT,RR,01-Apr-19,300,400,INE041025011,300\n"
+        )
+
+        def side_effect(url, *args, **kwargs):
+            if url == fetch.NSE_CSV_URL:
+                return FakeResponse(content=main_csv_text.encode("utf-8"))
+            if url == fetch.NSE_SME_CSV_URL:
+                return FakeResponse(content=sme_csv_text.encode("utf-8"))
+            if url == fetch.NSE_INVIT_CSV_URL:
+                return FakeResponse(content=invit_csv_text.encode("utf-8"))
+            if url == fetch.NSE_REIT_CSV_URL:
+                return FakeResponse(content=reit_csv_text.encode("utf-8"))
+            return FakeResponse(json_data={})
+
+        def yahoo_side_effect(symbol):
+            return symbol in {"SME1.NS"}
+
+        mock_get.side_effect = side_effect
+        yahoo_supported.side_effect = yahoo_side_effect
+
+        added = fetch.download_nse_tickers()
+
+        self.assertEqual(added, 4)
+        self.assertEqual(
+            [call.args[0] for call in upsert_ticker.call_args_list],
+            ["ABC.NS", "INDIGRID.NS", "EMBASSY.NS", "SME1.NS"],
+        )
+        self.assertEqual(update_face_value.call_args_list[0].args, (1, 10.0))
+        self.assertEqual(update_face_value.call_args_list[1].args, (2, 100.0))
+        self.assertEqual(update_face_value.call_args_list[2].args, (3, 300.0))
+        self.assertEqual(update_face_value.call_args_list[3].args, (4, 10.0))
 
     @patch("dividend_calculator.fetch.time.sleep", return_value=None)
     @patch("dividend_calculator.fetch.db.get_ticker_face_value", return_value=5.0)

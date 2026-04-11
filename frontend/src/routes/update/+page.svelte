@@ -2,6 +2,7 @@
 	import { RefreshCw, Terminal, CheckCircle, XCircle, Play, Square, CloudDownload, Zap } from 'lucide-svelte';
 	import { api } from '$lib/api';
 	import type { UpdateRequest } from '$lib/types';
+	import { goto } from '$app/navigation';
 
 	let req = $state<UpdateRequest>({
 		symbol: '',
@@ -61,6 +62,7 @@
 				if (data.done) {
 					status = data.error ? 'error' : 'done';
 					if (data.error) errorMsg = data.error;
+					if (!data.error) api.clearCache();
 					es?.close();
 					es = null;
 				}
@@ -71,6 +73,7 @@
 			if (status === 'running') {
 				status = logs.length > 0 ? 'done' : 'error';
 				if (status === 'error') errorMsg = 'Connection to server lost.';
+				if (status === 'done') api.clearCache();
 			}
 			es?.close();
 			es = null;
@@ -333,6 +336,15 @@
 				<div class="flex items-center gap-2 text-sm text-ink-500 mt-4">
 					<div class="h-1.5 w-1.5 rounded-full bg-coral-400 animate-pulse"></div>
 					Waiting for output...
+				</div>
+			{/if}
+
+			{#if status === 'done'}
+				<div class="mt-5 flex flex-wrap gap-3">
+					<button type="button" class="btn-coral" onclick={() => goto('/')}>
+						Go to Overview
+					</button>
+					<a href="/screener" class="btn-outline">Open Screener</a>
 				</div>
 			{/if}
 		</div>

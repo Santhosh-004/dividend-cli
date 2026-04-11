@@ -9,6 +9,7 @@ import io
 import time
 import bisect
 import math
+import concurrent.futures
 from datetime import datetime
 from typing import List, Tuple, Optional, Dict, Any
 
@@ -16,7 +17,10 @@ import requests
 import yfinance as yf
 from . import db
 
-NSE_CSV_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
+NSE_CSV_URL = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
+NSE_SME_CSV_URL = "https://nsearchives.nseindia.com/emerge/corporates/content/SME_EQUITY_L.csv"
+NSE_INVIT_CSV_URL = "https://nsearchives.nseindia.com/content/equities/INVITS_L.csv"
+NSE_REIT_CSV_URL = "https://nsearchives.nseindia.com/content/equities/REITS_L.csv"
 # We use a long range but stick to 1mo to get historical dividends efficiently.
 # For prices, we might need a separate call or just accept 1mo granularity if that's all we get.
 # Actually, the chart API with events=div returns ALL dividends in 'max' range.
@@ -27,6 +31,75 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
     "Accept": "application/json",
 }
+
+
+def _clean_csv_rows(text: str) -> List[Dict[str, str]]:
+    rows: List[Dict[str, str]] = []
+    reader = csv.DictReader(io.StringIO(text))
+    for row in reader:
+        cleaned = {
+            k.strip(): v.strip()
+            for k, v in row.items()
+            if k is not None and v is not None
+        }
+        symbol = cleaned.get("SYMBOL", "")
+        isin = cleaned.get("ISIN NUMBER") or cleaned.get("ISIN_NUMBER")
+        if not symbol or symbol.lower().startswith("note"):
+            continue
+        if isin is not None and not isin.strip():
+            continue
+        rows.append(cleaned)
+    return rows
+
+
+def _download_security_rows(url: str) -> List[Dict[str, str]]:
+    response = requests.get(url, headers=HEADERS, timeout=30)
+    response.raise_for_status()
+    text = response.content.decode("utf-8", errors="ignore")
+    return _clean_csv_rows(text)
+
+
+def _yahoo_symbol_supported(symbol: str) -> bool:
+    url = YAHOO_API_URL.format(symbol=symbol)
+    try:
+        response = requests.get(
+            url,
+            headers=HEADERS,
+            params={"range": "1d", "interval": "1d"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        data = response.json()
+        result = data.get("chart", {}).get("result", [])
+        if not result:
+            return False
+        meta = result[0].get("meta", {})
+        return meta.get("exchangeName") == "NSI"
+    except Exception:
+        return False
+
+
+def _upsert_ticker_row(row: Dict[str, str], seen_symbols: set[str]) -> bool:
+    symbol = row.get("SYMBOL", "")
+    if not symbol:
+        return False
+
+    yahoo_symbol = f"{symbol}.NS"
+    if yahoo_symbol in seen_symbols:
+        return False
+
+    ticker_id = db.upsert_ticker(
+        yahoo_symbol,
+        name=row.get("NAME OF COMPANY") or row.get("NAME_OF_COMPANY"),
+    )
+    face_value = row.get("FACE VALUE") or row.get("FACE_VALUE")
+    try:
+        db.update_ticker_face_value(ticker_id, float(face_value) if face_value else None)
+    except ValueError:
+        db.update_ticker_face_value(ticker_id, None)
+
+    seen_symbols.add(yahoo_symbol)
+    return True
 
 
 def _to_float(value: Any) -> Optional[float]:
@@ -71,108 +144,51 @@ def _annual_statement(ticker: yf.Ticker, getter_names: List[str]):
     return None
 
 def download_nse_tickers(force: bool = False) -> int:
-    """Download all NSE ticker symbols including stocks, INVITs, and REITs.
-    
-    Sources:
-    1. NSE CSV for EQ/BE/BZ series stocks
-    2. Yahoo Finance search for INVITs and REITs (not in NSE CSV)
-    """
+    """Download NSE tickers from exchange files and validate broader coverage with Yahoo."""
     added = 0
-    seen_symbols = set()
-    
-    # 1. Download EQ/BE/BZ series from NSE CSV
+    seen_symbols = {row["symbol"] for row in db.get_all_tickers()}
+
     try:
-        response = requests.get(NSE_CSV_URL, headers=HEADERS, timeout=30)
-        response.raise_for_status()
-        text = response.content.decode("utf-8", errors="ignore")
-        reader = csv.DictReader(io.StringIO(text))
-        
-        for row in reader:
-            row = {k.strip(): v.strip() for k, v in row.items() if k is not None and v is not None}
-            symbol = row.get("SYMBOL")
-            if not symbol:
-                continue
-            series = row.get("SERIES")
-            # Include all equity-like series (EQ, BE, BZ)
-            if series not in ("EQ", "BE", "BZ"):
-                continue
-            yahoo_symbol = f"{symbol}.NS"
-            if yahoo_symbol not in seen_symbols:
-                name = row.get("NAME OF COMPANY")
-                ticker_id = db.upsert_ticker(yahoo_symbol, name=name)
-                face_value = row.get("FACE VALUE")
-                try:
-                    db.update_ticker_face_value(ticker_id, float(face_value) if face_value else None)
-                except ValueError:
-                    db.update_ticker_face_value(ticker_id, None)
-                seen_symbols.add(yahoo_symbol)
-                added += 1
-    except Exception as e:
-        pass
-    
-    # 2. Search Yahoo Finance for INVITs and REITs (not in NSE CSV)
-    # Search for INVITs and REITs, then try to find dividend-paying versions
-    search_terms = ["INVIT", "REIT", "Infrastructure Investment Trust", "Real Estate Investment Trust"]
-    
-    for term in search_terms:
+        main_rows = _download_security_rows(NSE_CSV_URL)
+    except Exception:
+        main_rows = []
+
+    main_symbols = {row.get("SYMBOL", "") for row in main_rows if row.get("SYMBOL")}
+
+    for row in main_rows:
+        if _upsert_ticker_row(row, seen_symbols):
+            added += 1
+
+    for url in (NSE_INVIT_CSV_URL, NSE_REIT_CSV_URL):
         try:
-            params = {
-                "q": term,
-                "quotesCount": 100,
-                "newsCount": 0,
-            }
-            response = requests.get(YAHOO_SEARCH_URL, headers=HEADERS, params=params, timeout=15)
-            response.raise_for_status()
-            data = response.json()
-            
-            for quote in data.get("quotes", []):
-                if quote.get("exchange") != "NSI":  # NSE only
-                    continue
-                
-                symbol = quote.get("symbol", "")
-                if not symbol.endswith(".NS"):
-                    continue
-                
-                # Check if it's an INVIT or REIT
-                symbol_upper = symbol.upper()
-                name = quote.get("shortname", quote.get("longname", ""))
-                name_upper = name.upper() if name else ""
-                
-                is_invit_reit = (
-                    "-IV.NS" in symbol or "-RR.NS" in symbol or "-BL.NS" in symbol or
-                    any(x in symbol_upper or x in name_upper for x in [
-                        "INVIT", "REIT", "INFRASTRUCTURE TRUST", "REAL ESTATE TRUST"
-                    ])
-                )
-                
-                if not is_invit_reit:
-                    continue
-                
-                # Try to find the dividend-paying version
-                # Yahoo has two versions: with suffix (-IV, -RR) and without
-                # Only the version WITHOUT suffix typically has dividend data
-                base_symbol = symbol
-                for suffix in ["-IV.NS", "-RR.NS", "-BL.NS"]:
-                    if suffix in symbol:
-                        base_symbol = symbol.replace(suffix, ".NS")
-                        break
-                
-                # Add the base symbol (without suffix) if not already added
-                if base_symbol not in seen_symbols:
-                    ticker_id = db.upsert_ticker(base_symbol, name=name)
-                    seen_symbols.add(base_symbol)
-                    added += 1
-                
-                # Also add the suffixed version (might be useful for some users)
-                if symbol not in seen_symbols:
-                    ticker_id = db.upsert_ticker(symbol, name=name)
-                    seen_symbols.add(symbol)
-            
-            time.sleep(0.3)  # Be nice to Yahoo
-            
-        except Exception as e:
-            pass
-    
+            rows = _download_security_rows(url)
+        except Exception:
+            rows = []
+        for row in rows:
+            if _upsert_ticker_row(row, seen_symbols):
+                added += 1
+
+    try:
+        sme_rows = _download_security_rows(NSE_SME_CSV_URL)
+    except Exception:
+        sme_rows = []
+
+    sme_candidates = []
+    for row in sme_rows:
+        symbol = row.get("SYMBOL", "")
+        if not symbol or symbol in main_symbols or symbol.endswith("-RE"):
+            continue
+        sme_candidates.append(row)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+        validations = executor.map(
+            lambda row: _yahoo_symbol_supported(f"{row['SYMBOL']}.NS"),
+            sme_candidates,
+        )
+        for row, is_supported in zip(sme_candidates, validations):
+            if is_supported and _upsert_ticker_row(row, seen_symbols):
+                added += 1
+
     return added
 
 def fetch_dividends(symbol: str, fetch_price: bool = True) -> Tuple[int, int]:

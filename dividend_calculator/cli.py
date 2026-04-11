@@ -6,6 +6,9 @@ performance, and view stats for a single ticker.
 
 import sys
 import io
+import shutil
+import subprocess
+from pathlib import Path
 
 if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -21,6 +24,38 @@ from typing import Optional
 from . import __version__, db
 from . import fetch
 from . import utils
+
+
+def _frontend_build_is_stale(frontend_dir: Path, frontend_dist: Path) -> bool:
+    if not frontend_dist.exists():
+        return True
+
+    index_file = frontend_dist / "index.html"
+    if not index_file.exists():
+        return True
+
+    dist_mtime = index_file.stat().st_mtime
+    watch_dirs = [frontend_dir / "src", frontend_dir / "static"]
+    watch_files = [
+        frontend_dir / "package.json",
+        frontend_dir / "package-lock.json",
+        frontend_dir / "svelte.config.js",
+        frontend_dir / "vite.config.ts",
+        frontend_dir / "tsconfig.json",
+    ]
+
+    for path in watch_files:
+        if path.exists() and path.stat().st_mtime > dist_mtime:
+            return True
+
+    for directory in watch_dirs:
+        if not directory.exists():
+            continue
+        for item in directory.rglob("*"):
+            if item.is_file() and item.stat().st_mtime > dist_mtime:
+                return True
+
+    return False
 
 
 @click.group()
@@ -700,6 +735,40 @@ def serve(host, port, open_browser):
         click.echo("uvicorn is required to run the web server. Install it with:")
         click.echo("  pip install uvicorn[standard]")
         raise SystemExit(1)
+
+    project_root = Path(__file__).resolve().parent.parent
+    frontend_dir = project_root / "frontend"
+    frontend_dist = frontend_dir / "dist"
+    frontend_package = frontend_dir / "package.json"
+    npm_cmd = shutil.which("npm")
+
+    if frontend_package.exists():
+        needs_build = _frontend_build_is_stale(frontend_dir, frontend_dist)
+
+        if npm_cmd is None:
+            if needs_build:
+                click.echo("The web UI build is missing or stale and npm is not installed or not on PATH.")
+                click.echo("Install Node.js/npm, then run:")
+                click.echo("  cd frontend && npm install && npm run build")
+                raise SystemExit(1)
+        elif needs_build:
+            click.echo("Preparing local web UI assets...")
+            lockfile = frontend_dir / "package-lock.json"
+            node_modules = frontend_dir / "node_modules"
+            install_cmd = None
+            if not node_modules.exists():
+                install_cmd = [npm_cmd, "ci"] if lockfile.exists() else [npm_cmd, "install"]
+
+            try:
+                if install_cmd is not None:
+                    subprocess.run(install_cmd, cwd=frontend_dir, check=True)
+                subprocess.run([npm_cmd, "run", "build"], cwd=frontend_dir, check=True)
+            except FileNotFoundError:
+                click.echo("npm was not found while preparing the frontend build.")
+                raise SystemExit(1)
+            except subprocess.CalledProcessError as exc:
+                click.echo(f"Failed to prepare frontend assets (exit code {exc.returncode}).")
+                raise SystemExit(exc.returncode)
 
     url = f"http://{host}:{port}"
     click.echo(f"Starting Dividend CLI web UI at {url}")
