@@ -24,3 +24,7 @@ MANIFEST
 .pytest_cache/
 .vscode/
 .idea/
+frontend/package-lock.json
+research/*
+.playwright-mcp/*
+venv/*

@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-04-11
+
+### Added
+- **Web UI (`serve`)**: Added a FastAPI + SvelteKit web interface for browsing top dividend stocks, screening ideas, viewing stock detail pages, and running updates from the browser.
+- **Dividend Quality Score**: Introduced a new 0-100 dividend quality metric with ratings (`Elite`, `Strong`, `Developing`, `Fragile`) designed to measure stable and growing annual dividends over full history.
+- **Quality filtering**: Added `--min-div-quality` to the CLI and `min_div_quality` support in the API/frontend screener.
+- **Quality variables for `--condition`**: Added `dq_score` / `dividend_quality_score` and `dq_rating` / `dividend_quality_rating` for advanced screening logic.
+- **Quality leaderboard**: Added a homepage/top-stocks ranking for highest dividend quality.
+- **Stock detail quality panel**: Added breakdown of quality, consistency, growth, and trend-fit in the stock detail page.
+
+### Changed
+- **Stability metric replaced**: Replaced CV-based `VeryStable/Moderate/Volatile` classification with Dividend Quality as the main user-facing metric across CLI, API, and frontend.
+- **Homepage redesigned**: Reworked the homepage into a cleaner editorial dashboard with `Top Yields` and `Best Quality` sections.
+- **Screener presets improved**: Preset buttons now apply more truthful filter combinations, expand the filter panel so users can see applied values, and only stay highlighted while the current filters still exactly match that preset.
+- **Screener limit input fixed**: Limit control now increments by 1, normalizes correctly, and accepts nearby values predictably.
+- **Stock detail redesign**: Reworked the stock detail page around dividend quality, track record, cleaner fundamentals, and clearer charts.
+- **Update page redesigned**: Update flow now behaves like an operational utility/settings page with live progress output.
+- **Favicon and design system refreshed**: Frontend received a full visual refresh with the new editorial terminal aesthetic.
+
+### Fixed
+- **Misclassified dividend growers**: Stocks like `INDIGRID.NS` and `HDFCBANK.NS` no longer get punished by raw dispersion metrics despite visibly strong dividend growth histories.
+- **Yield consistency**: Fixed contradictory yield displays (for example `CAPLIPOINT.NS`) by aligning fundamentals yield shown in stats/UI with the app's computed current yield.
+- **Preset UX clarity**: Users can now see preset-applied values in the filter form immediately after clicking a preset.
+- **Homepage layout issues**: Removed the broken/clipped third leaderboard layout and stabilized the overview page.
+
+### Removed
+- **Yield CAGR from UI**: Removed Yield CAGR from the stock detail page because it was confusing and not a strong user-facing metric.
+- **Volatility as the primary story**: CV/std-dev remain only as legacy diagnostics for advanced CLI filtering, not as the main dividend quality signal.
+
 ## [1.0.1] - 2026-04-03
 
 ### Added

@@ -1,172 +1,225 @@
-# 📈 Indian Stock Dividend Calculator & Filter
+# Dividend CLI
 
-A powerful CLI tool designed for Indian equity investors to track, analyze, and filter stocks based on their complete dividend history. Unlike standard screeners, this tool handles **stock splits** correctly, showing you both the raw historical dividends and the true growth of a single original share.
+`dividend-cli` is an Indian dividend research platform for NSE stocks, REITs, and INVITs.
 
-Works with **stocks, REITs, and INVITs** on NSE.
+It started as a CLI and now ships with a full local web UI. The goal is simple: make dividend research faster, clearer, and a lot less misleading.
 
-## 🚀 Key Features
+## Why this exists
 
-- **Automated Data Pipeline**: Fetches the complete NSE ticker list (including REITs and INVITs) and sources deep dividend/price history directly from Yahoo Finance APIs.
-- **Dual Dividend View**:
-  - **Raw**: What was actually paid per share at that time (matches company filings)
-  - **Forward-Adjusted**: Total payout from 1 original share (shows true growth)
-- **Correct Split Handling**: Properly handles stock splits by converting Yahoo's backward-adjusted data to raw, then forward-adjusting correctly.
-- **Smart Dividend Growth (CAGR)**: 
-  - Excludes current year (incomplete data)
-  - Skips zero-dividend years for accurate growth calculation
-- **Multi-Period Dividend Growth**: View Compounded Annual Dividend Growth Rates for 3, 5, 10, 15, 20, 25, and 30-year durations.
-- **Dividend Stability Metrics**: Standard deviation and coefficient of variation (CV%) to measure dividend volatility.
-- **Yield CAGR**: Track how your dividend yield has grown over time.
-- **Consistency Tracking**: Track years where dividends were **Increased (Up)**, **Stalled (Flat)**, **Reduced**, or **Stopped**.
-- **Power-User Filtering**: Use standard flags or execute arbitrary Python-style conditions for complex research.
-- **Offline Storage**: All data is persisted in a local SQLite database for blazing-fast filtering and offline access.
+Most screeners focus on a snapshot yield. That misses the bigger picture:
 
-## 📦 Installation
+- did the dividend actually grow over time?
+- did it get cut?
+- did the company stop paying it?
+- did splits make the history look smaller than it really was?
 
-### Option 1: Pre-built Executables (No Python Required)
+`dividend-cli` is built to answer those questions properly.
 
-1. **Download** the executable for your OS from [Releases](https://github.com/Santhosh-004/dividend-cli/releases)
-2. **Run** the executable:
-   - Windows: `dividend-cli.exe update`
-   - Linux/Mac: `./dividend-cli update`
+## What it does
 
-   This will download the dividend data to `dividend.db` in the same folder.
+- **Split-aware dividend history**: shows raw payouts and forward-adjusted income from 1 original share
+- **Dividend growth analytics**: CAGR over multiple periods, excluding incomplete current-year data
+- **Dividend Quality Score**: a 0-100 score that rewards stable, growing annual dividends
+- **Consistency tracking**: counts years of increases, stalls, reductions, and stoppages
+- **Power-user filtering**: regular flags plus `--condition` expressions for custom screening logic
+- **Local SQLite storage**: everything stays fast and searchable on your machine
+- **Web UI**: browse top ideas, screen stocks, inspect detail pages, and run updates in the browser
+- **Stocks, REITs, and INVITs**: works across the dividend universe on NSE
 
-3. **Now you can view stats**:
-   - Windows: `dividend-cli.exe stats HDFCBANK.NS`
-   - Linux/Mac: `./dividend-cli stats HDFCBANK.NS`
+## Release highlights
 
-### Option 2: From Source (Python Required)
+### v1.1.0
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/Santhosh-004/dividend-cli.git
-   cd dividend-cli
-   ```
+- Added the local web UI via `dividend-cli serve`
+- Replaced the old volatility-first framing with Dividend Quality
+- Added quality-based ranking and filtering
+- Redesigned the homepage, screener, stock page, and update flow
+- Fixed contradictory yield displays by keeping the app's yield definition consistent
 
-2. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Installation
 
-3. **Install the CLI tool**:
-   ```bash
-   pip install -e .
-   ```
+### Option 1: Pre-built executables
 
-## 🛠️ Usage
+Download the binary for your OS from GitHub Releases.
 
-### 1. Download/Update Data
-Download the latest NSE ticker list and fetch history for all stocks. The tool intelligently refreshes data only if it's older than 90 days.
 ```bash
-# Update all stocks (this may take time due to rate limiting)
+# Windows
+dividend-cli.exe update
+
+# Linux / macOS
+./dividend-cli update
+```
+
+### Option 2: From source
+
+```bash
+git clone https://github.com/Santhosh-004/dividend-cli.git
+cd dividend-cli
+pip install -r requirements.txt
+pip install -e .
+```
+
+## Quick Start
+
+### 1) Load data
+
+```bash
 dividend-cli update
+```
 
-# Update a small batch for testing
+If you want to test first:
+
+```bash
 dividend-cli update --limit 50
-
-# Update a specific stock
-dividend-cli update --symbol HDFCBANK.NS
-
-# Force refresh (ignore 90-day cache)
-dividend-cli update --force
 ```
 
-### 2. Filter for Quality Stocks
-Find "Dividend Aristocrats" or high-growth opportunities using robust filters.
+### 2) Open the web UI
 
 ```bash
-# Basic Filter: Min 1.5% yield and 10% 5-year Dividend Growth
-dividend-cli filter --min-yield 1.5 --div-5yr-min 10
-
-# Consistency Filter: Min 5 years of Dividend growth, Max 1 year of Dividend reduction
-dividend-cli filter --years-up 5 --years-reduced 1
-
-# Stable dividends: CV < 30%
-dividend-cli filter --condition "div_cv < 30"
+dividend-cli serve
 ```
 
-### 3. Power-User: Arbitrary Conditions
-Use the `--condition` flag to run complex mathematical logic.
-```bash
-# Find stocks where Dividend growth years outpace stalled/stopped years by 2x
-dividend-cli filter --condition "(years_stopped + years_stalled) * 2 <= years_up"
+This starts the app at `http://127.0.0.1:7788` and opens it in your browser.
 
-# Find stocks where 3Yr Dividend growth is strictly better than 10Yr growth
-dividend-cli filter --condition "div_3yr > div_10yr"
+### 3) Inspect a stock
 
-# High yield with low volatility
-dividend-cli filter --condition "yld > 2 and div_cv < 25"
-```
-
-### 4. Detailed Ticker Stats
-See the full dividend journey of a specific ticker with both raw and forward-adjusted data.
 ```bash
 dividend-cli stats HDFCBANK.NS
-
-# Works with REITs and INVITs too
-dividend-cli stats EMBASSY.NS
 dividend-cli stats INDIGRID.NS
+dividend-cli stats CAPLIPOINT.NS
 ```
 
-## 📊 Output Explanation
+### 4) Screen for ideas
 
-### Stats Command
-The `stats` command shows:
+```bash
+# High yield + growth
+dividend-cli filter --min-yield 1.5 --div-5yr-min 10
 
-1. **Yearly Totals (Consolidated)**: Shows raw dividend per share, share count (after splits), and total income from 1 original share.
-2. **CAGR**: Compound annual growth rate, calculated excluding:
-   - Current year (incomplete data)
-   - Years with zero dividends
-3. **Dividend Stability**: Mean, standard deviation, and coefficient of variation (CV%):
-   - CV < 20% = Very Stable
-   - CV 20-50% = Moderate
-   - CV > 50% = Volatile
-4. **Yield CAGR**: Growth of your dividend yield over 10, 15, 20, 25, 30 years.
-5. **Year-over-Year Summary**: Count of years with increased/stalled/reduced/stopped dividends.
-6. **Recent Payments**: Shows raw amount, forward-adjusted amount, and number of shares at that time.
+# Strong dividend quality
+dividend-cli filter --min-div-quality 75
 
-### Filter Variables Reference
-When using the `--condition` flag, you can use the following variables:
+# Long streak of dividend increases
+dividend-cli filter --years-up 7 --years-stopped 0
+```
 
-| Variable | Description |
-| :--- | :--- |
-| `up` / `years_up` | Total years dividend increased |
-| `stalled` / `years_stalled` | Total years dividend remained flat |
-| `reduced` / `years_reduced` | Total years dividend decreased |
-| `stopped` / `years_stopped` | Total years dividend was zero |
-| `yld` / `last_yield` | Last year's dividend yield (%) |
-| `div_growth` / `div_growth_overall` | Dividend growth (CAGR) since first record |
-| `div_3yr`, `div_5yr`, `div_10yr` ... | Dividend growth (CAGR) for last 3, 5, 10, 15, 20, 25, 30 years |
-| `div_mean` | Mean (average) yearly dividend |
-| `div_std` | Standard deviation of yearly dividends |
-| `div_cv` | Coefficient of variation (stability %) |
-| `price` | Current market price |
-| `shares` | Current share count from 1 original share |
+## Core ideas
 
-## 🧠 How it Works
+### Split-adjusted dividend history
 
-### Data Adjustment Process
+The tool shows both:
 
-1. **Yahoo Finance Data**: Yahoo provides backward-adjusted dividends (divided by splits).
-2. **Convert to Raw**: Multiply by splits that happened AFTER each dividend date to get what was actually paid.
-3. **Forward Adjust**: Multiply by cumulative splits AT THAT TIME to show total from 1 original share.
+- **Raw** dividends: what was actually paid per share
+- **Forward-adjusted** income: what 1 original share would have earned after splits
 
-**Example with HDFC Bank:**
-- 1997: Raw ₹0.80 (1 share), Forward ₹0.80 (1 share)
-- 2012: Raw ₹4.30 (per share), Forward ₹21.50 (5 shares)
-- 2022: Raw ₹15.50 (per share), Forward ₹155.00 (10 shares)
+That makes long histories much easier to read honestly.
 
-### Why This Matters
+### Dividend Quality Score
 
-- **Raw dividends** match company filings exactly - useful for verification
-- **Forward-adjusted** shows true dividend growth per original share - useful for long-term analysis
-- **Dividend Growth excludes incomplete years** - gives accurate growth picture
-- **Skips zero-dividend years** - avoids false dips in growth (e.g., RBI dividend ban in 2020)
+The old CV/stability approach could punish great dividend growers just because they grew a lot.
 
-## 📋 Requirements
+The new **Dividend Quality Score** looks at:
+
+- dividend increases
+- flat years
+- reductions
+- stoppages
+- long-term growth
+- the shape of the annual trend
+
+Ratings:
+
+- `Elite`
+- `Strong`
+- `Developing`
+- `Fragile`
+
+## CLI examples
+
+### Stats
+
+```bash
+dividend-cli stats HDFCBANK.NS
+```
+
+You’ll see:
+- stock splits
+- yearly consolidated dividends
+- CAGR by period
+- dividend quality breakdown
+- year-over-year summary
+- recent payments
+- fundamentals snapshot if available
+
+### Filter
+
+```bash
+# Quality-first screen
+dividend-cli filter --min-div-quality 80 --min-roe 15
+
+# Reliable growers
+dividend-cli filter --years-up 5 --div-5yr-min 8 --years-stopped 0
+
+# Higher yield, but not a broken history
+dividend-cli filter --min-yield 4 --years-stopped 1
+```
+
+### Custom conditions
+
+```bash
+# Growth years should dominate bad years
+dividend-cli filter --condition "years_up >= 2 * (years_stalled + years_reduced)"
+
+# Strong quality and acceptable yield
+dividend-cli filter --condition "dq_score >= 80 and yld > 1"
+
+# Recent growth stronger than long-term baseline
+dividend-cli filter --condition "c3 > c10 and c3 > 15"
+```
+
+## Condition variables
+
+| Variable | Meaning |
+| --- | --- |
+| `yld` / `last_yield` | last completed year's dividend yield (%) |
+| `years_up` / `up` | years dividend increased |
+| `years_stalled` / `stalled` | years dividend stayed flat |
+| `years_reduced` / `reduced` | years dividend was reduced |
+| `years_stopped` / `stopped` | years dividend was zero |
+| `div_growth` / `div_growth_overall` | overall dividend CAGR |
+| `c3`, `c5`, `c10`, `c15`, `c20`, `c25`, `c30` | period CAGR values |
+| `dq_score` / `dividend_quality_score` | dividend quality score (0-100) |
+| `dq_rating` / `dividend_quality_rating` | quality rating |
+| `div_mean` | mean yearly dividend |
+| `div_std` | standard deviation of yearly dividends |
+| `div_cv` | legacy coefficient of variation |
+| `price` | current market price |
+| `shares` | shares resulting from 1 original share after splits |
+
+See `CONDITIONS.md` for more examples.
+
+## Web UI
+
+```bash
+dividend-cli serve
+```
+
+The UI includes:
+- **Overview**: top yields and best quality names
+- **Screener**: presets + custom filters
+- **Stock pages**: annual dividend charts, quality breakdown, recent payments, fundamentals
+- **Update page**: refresh data from the browser
+
+## Notes
+
+- Current-year data is excluded from growth calculations because it may be incomplete.
+- Yield shown in the app is computed consistently from the dividend history and price on the last dividend date.
+- Vendor fundamentals can disagree with computed values, so the app prefers its own consistent yield calculation for display.
+
+## Requirements
+
 - Python 3.9+
-- `pandas`, `click`, `tabulate`, `tqdm`, `requests`
+- `pandas`, `click`, `tabulate`, `tqdm`, `requests`, `yfinance`, `fastapi`, `uvicorn`
 
----
-*Disclaimer: This tool is for educational and research purposes only. Always verify data with official exchange filings before making investment decisions.*
+## Disclaimer
+
+This tool is for research and educational use only. Always verify dividend and corporate action data with official filings before making investment decisions.
