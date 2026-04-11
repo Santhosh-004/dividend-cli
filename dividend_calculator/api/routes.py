@@ -8,7 +8,7 @@ import asyncio
 import json
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, AsyncGenerator, Any
 from threading import Thread
 
@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from .. import db, fetch, utils
+from ..timeutils import parse_utc_timestamp
 
 # ---------------------------------------------------------------------------
 # Simple TTL cache
@@ -844,13 +845,13 @@ def start_update(req: UpdateRequest):
                     tickers = tickers[: req.limit]
 
             emit(f"Checking data for {len(tickers)} tickers...")
-            threshold = datetime.utcnow() - timedelta(days=req.max_age or 7)
+            threshold = datetime.now(timezone.utc) - timedelta(days=req.max_age or 7)
 
             def is_stale(ts):
                 if not ts:
                     return True
                 try:
-                    return datetime.fromisoformat(ts) < threshold
+                    return parse_utc_timestamp(ts) < threshold
                 except ValueError:
                     return True
 

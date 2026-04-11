@@ -40,6 +40,11 @@ dependencies = [
 dev = [
     "pytest",
     "ruff",
+    "httpx",
+]
+test = [
+    "pytest",
+    "httpx",
 ]
 build = [
     "pyinstaller>=6.0",

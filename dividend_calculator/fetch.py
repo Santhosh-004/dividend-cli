@@ -10,12 +10,12 @@ import time
 import bisect
 import math
 import concurrent.futures
-from datetime import datetime
 from typing import List, Tuple, Optional, Dict, Any
 
 import requests
 import yfinance as yf
 from . import db
+from .timeutils import utc_from_timestamp, utc_now_iso
 
 NSE_CSV_URL = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
 NSE_SME_CSV_URL = "https://nsearchives.nseindia.com/emerge/corporates/content/SME_EQUITY_L.csv"
@@ -221,11 +221,11 @@ def fetch_dividends(symbol: str, fetch_price: bool = True) -> Tuple[int, int]:
         numerator = split.get("numerator")
         denominator = split.get("denominator")
         if ts and numerator and denominator:
-            dt = datetime.utcfromtimestamp(ts)
+            dt = utc_from_timestamp(ts)
             db.insert_split(ticker_id, dt.date().isoformat(), float(numerator), float(denominator))
 
     if not dividends_data:
-        db.update_ticker_timestamp(ticker_id, datetime.utcnow().isoformat())
+        db.update_ticker_timestamp(ticker_id, utc_now_iso())
         return (0, 0)
     
     new_div = 0
@@ -248,7 +248,7 @@ def fetch_dividends(symbol: str, fetch_price: bool = True) -> Tuple[int, int]:
         if amount is None or ts is None:
             continue
             
-        dt = datetime.utcfromtimestamp(ts)
+        dt = utc_from_timestamp(ts)
         date_str = dt.date().isoformat()
         
         db.insert_dividend(ticker_id, date_str, float(amount))
@@ -277,7 +277,7 @@ def fetch_dividends(symbol: str, fetch_price: bool = True) -> Tuple[int, int]:
                 db.insert_price(ticker_id, date_str, float(closest_price))
                 new_price += 1
             
-    db.update_ticker_timestamp(ticker_id, datetime.utcnow().isoformat())
+    db.update_ticker_timestamp(ticker_id, utc_now_iso())
     return (new_div, new_price)
 
 
@@ -375,7 +375,7 @@ def fetch_fundamentals(symbol: str, ticker_id: int) -> Optional[Dict[str, Any]]:
             latest_data["face_value"] = face_value
 
         if latest_data:
-            latest_data["last_updated"] = datetime.utcnow().isoformat()
+            latest_data["last_updated"] = utc_now_iso()
             db.upsert_screener_latest(ticker_id, latest_data)
 
         if income_df is not None and not getattr(income_df, "empty", True):

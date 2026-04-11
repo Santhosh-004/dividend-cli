@@ -17,12 +17,13 @@ if sys.platform == 'win32':
 import click
 import pandas as pd
 from tabulate import tabulate
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from tqdm import tqdm
 from typing import Optional
 
 from . import __version__, db
 from . import fetch
+from .timeutils import parse_utc_timestamp
 from . import utils
 
 
@@ -88,13 +89,13 @@ def update(symbol, force, max_age, limit):
 
     click.echo(f"Checking data for {len(tickers)} tickers...")
     
-    threshold = datetime.utcnow() - timedelta(days=max_age)
+    threshold = datetime.now(timezone.utc) - timedelta(days=max_age)
 
     def is_stale(timestamp: Optional[str]) -> bool:
         if not timestamp:
             return True
         try:
-            return datetime.fromisoformat(timestamp) < threshold
+            return parse_utc_timestamp(timestamp) < threshold
         except ValueError:
             return True
 

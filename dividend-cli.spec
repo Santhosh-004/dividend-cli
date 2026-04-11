@@ -1,11 +1,29 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(SPECPATH)
+FRONTEND_DIST = PROJECT_ROOT / 'frontend' / 'dist'
+
+
+def build_frontend_datas(frontend_dist: Path):
+    if not frontend_dist.exists():
+        return []
+
+    datas = []
+    for asset in frontend_dist.rglob('*'):
+        if asset.is_file():
+            target_dir = Path('frontend') / 'dist' / asset.relative_to(frontend_dist).parent
+            datas.append((str(asset), target_dir.as_posix()))
+    return datas
+
 
 a = Analysis(
     ['run.py'],
-    pathex=[],
+    pathex=[str(PROJECT_ROOT)],
     binaries=[],
-    datas=[],
+    datas=build_frontend_datas(FRONTEND_DIST),
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
