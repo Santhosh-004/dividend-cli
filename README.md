@@ -42,14 +42,6 @@ Most screeners focus on a snapshot yield. That misses the bigger picture:
 
 Download the binary for your OS from GitHub Releases.
 
-```bash
-# Windows
-dividend-cli.exe update
-
-# Linux / macOS
-./dividend-cli update
-```
-
 ### Option 2: From source
 
 ```bash
@@ -61,7 +53,7 @@ pip install -e .
 
 ## Quick Start
 
-### 1) Load data
+### 1) Load data (can also be done from the web UI)
 
 ```bash
 dividend-cli update
@@ -142,6 +134,7 @@ dividend-cli stats HDFCBANK.NS
 ```
 
 You’ll see:
+
 - stock splits
 - yearly consolidated dividends
 - CAGR by period
@@ -178,22 +171,22 @@ dividend-cli filter --condition "c3 > c10 and c3 > 15"
 
 ## Condition variables
 
-| Variable | Meaning |
-| --- | --- |
-| `yld` / `last_yield` | last completed year's dividend yield (%) |
-| `years_up` / `up` | years dividend increased |
-| `years_stalled` / `stalled` | years dividend stayed flat |
-| `years_reduced` / `reduced` | years dividend was reduced |
-| `years_stopped` / `stopped` | years dividend was zero |
-| `div_growth` / `div_growth_overall` | overall dividend CAGR |
-| `c3`, `c5`, `c10`, `c15`, `c20`, `c25`, `c30` | period CAGR values |
-| `dq_score` / `dividend_quality_score` | dividend quality score (0-100) |
-| `dq_rating` / `dividend_quality_rating` | quality rating |
-| `div_mean` | mean yearly dividend |
-| `div_std` | standard deviation of yearly dividends |
-| `div_cv` | legacy coefficient of variation |
-| `price` | current market price |
-| `shares` | shares resulting from 1 original share after splits |
+| Variable                                      | Meaning                                             |
+| --------------------------------------------- | --------------------------------------------------- |
+| `yld` / `last_yield`                          | last completed year's dividend yield (%)            |
+| `years_up` / `up`                             | years dividend increased                            |
+| `years_stalled` / `stalled`                   | years dividend stayed flat                          |
+| `years_reduced` / `reduced`                   | years dividend was reduced                          |
+| `years_stopped` / `stopped`                   | years dividend was zero                             |
+| `div_growth` / `div_growth_overall`           | overall dividend CAGR                               |
+| `c3`, `c5`, `c10`, `c15`, `c20`, `c25`, `c30` | period CAGR values                                  |
+| `dq_score` / `dividend_quality_score`         | dividend quality score (0-100)                      |
+| `dq_rating` / `dividend_quality_rating`       | quality rating                                      |
+| `div_mean`                                    | mean yearly dividend                                |
+| `div_std`                                     | standard deviation of yearly dividends              |
+| `div_cv`                                      | legacy coefficient of variation                     |
+| `price`                                       | current market price                                |
+| `shares`                                      | shares resulting from 1 original share after splits |
 
 See `CONDITIONS.md` for more examples.
 
@@ -204,6 +197,7 @@ dividend-cli serve
 ```
 
 The UI includes:
+
 - **Overview**: top yields and best quality names
 - **Screener**: presets + custom filters
 - **Stock pages**: annual dividend charts, quality breakdown, recent payments, fundamentals
