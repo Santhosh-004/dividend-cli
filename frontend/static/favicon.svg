@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="24" fill="#0a0c10"/>
+  <rect width="128" height="128" rx="24" fill="#ff7b61" opacity="0.04"/>
+  <!-- Coral accent line — top-left editorial rule -->
+  <rect x="20" y="18" width="24" height="3" rx="1.5" fill="#ff7b61"/>
+  <!-- Serif D letterform -->
+  <text x="64" y="92" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="72" font-weight="400" font-style="italic" fill="#faf9f6">D</text>
+  <!-- Subtle border -->
+  <rect x="1.5" y="1.5" width="125" height="125" rx="22.5" fill="none" stroke="#ff7b61" stroke-width="1.5" opacity="0.2"/>
+  <!-- Mint growth dot -->
+  <circle cx="100" cy="30" r="5" fill="#4de6b0" opacity="0.8"/>
+</svg>
