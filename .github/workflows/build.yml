@@ -37,12 +37,15 @@ jobs:
           - os: windows-latest
             artifact_name: dividend-cli-windows
             executable_file: dividend-cli.exe
+            release_file: dividend-cli-windows.exe
           - os: ubuntu-latest
             artifact_name: dividend-cli-linux
             executable_file: dividend-cli
+            release_file: dividend-cli-linux
           - os: macos-latest
             artifact_name: dividend-cli-macos
             executable_file: dividend-cli
+            release_file: dividend-cli-macos
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -75,11 +78,17 @@ jobs:
       - name: Build with PyInstaller
         run: pyinstaller --clean --noconfirm dividend-cli.spec
 
+      - name: Prepare release asset name
+        shell: bash
+        run: cp "dist/${{ matrix.executable_file }}" "dist/${{ matrix.release_file }}"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: dist/${{ matrix.executable_file }}
+          path: |
+            dist/${{ matrix.executable_file }}
+            dist/${{ matrix.release_file }}
 
   release:
     needs: build
@@ -122,9 +131,9 @@ jobs:
         with:
           body_path: release_notes.md
           files: |
-            artifacts/dividend-cli-windows/dividend-cli.exe
-            artifacts/dividend-cli-linux/dividend-cli
-            artifacts/dividend-cli-macos/dividend-cli
+            artifacts/release-dividend-cli-windows/dividend-cli-windows.exe
+            artifacts/release-dividend-cli-linux/dividend-cli-linux
+            artifacts/release-dividend-cli-macos/dividend-cli-macos
           draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

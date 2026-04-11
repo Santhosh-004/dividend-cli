@@ -732,9 +732,10 @@ def serve(host, port, open_browser):
     """Start the Dividend CLI web UI server."""
     try:
         import uvicorn
+        from .server import app as server_app
     except ImportError:
-        click.echo("uvicorn is required to run the web server. Install it with:")
-        click.echo("  pip install uvicorn[standard]")
+        click.echo("The web UI server dependencies are missing. Install them with:")
+        click.echo("  pip install 'dividend-calculator[web]'")
         raise SystemExit(1)
 
     project_root = Path(__file__).resolve().parent.parent
@@ -781,7 +782,7 @@ def serve(host, port, open_browser):
         threading.Timer(1.5, lambda: webbrowser.open(url)).start()
 
     uvicorn.run(
-        "dividend_calculator.server:app",
+        server_app,
         host=host,
         port=port,
         reload=False,
