@@ -1,5 +1,7 @@
 # Dividend CLI
 
+![Dividend CLI Web UI](screenshots/overview.png)
+
 `dividend-cli` is an Indian dividend research platform for NSE stocks, REITs, and INVITs.
 
 It started as a CLI and now ships with a full local web UI. The goal is simple: make dividend research faster, clearer, and a lot less misleading.
